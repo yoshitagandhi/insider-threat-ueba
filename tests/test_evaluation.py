@@ -6,7 +6,7 @@ from pathlib import Path
 from src.evaluation.error_analysis import categorize_errors
 from src.evaluation.evaluate import evaluate_scores
 from src.evaluation.plots import threshold_sensitivity
-from src.evaluation.report import build_report, train_threshold
+from src.evaluation.report import build_report, insiders_caught, train_threshold
 from src.models.isolation_forest_model import save_isolation_forest, split_by_date
 
 
@@ -64,3 +64,19 @@ def test_report_threshold_comes_from_train_rows_only():
     iforest = report[report["model"] == "Isolation Forest"].iloc[0]
     assert iforest["recall"] == 1.0
     assert iforest["precision"] == 1.0
+
+
+def test_insiders_caught_counts_people_not_days():
+    scored = pd.DataFrame({
+        "split": ["train"] * 4 + ["test"] * 5,
+        "user": ["X", "X", "X", "X", "A", "A", "A", "B", "B"],
+        "scenario_group": [None] * 4 + ["r4.2-2"] * 5,
+        "is_malicious": [0, 0, 0, 0, 1, 1, 1, 1, 1],
+        "if_anomaly_score": [0.1, 0.2, 0.3, 0.4, 0.1, 0.1, 0.9, 0.1, 0.2],
+    })
+
+    result = insiders_caught(scored).set_index("scenario_group")
+
+    assert result.loc["r4.2-2", "insiders"] == 2
+    assert result.loc["r4.2-2", "caught"] == 1
+    assert result.loc["all", "share_caught"] == 0.5

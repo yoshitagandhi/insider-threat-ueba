@@ -25,24 +25,47 @@ lead, not evidence of intent and never an automated personnel decision.
 
 ## Headline result
 
-> **Re-run needed.** The numbers below were produced *before* the November 2026
-> improvements (cold-start fix, standard-deviation floor, two new features,
-> time-based split, average-precision PR-AUC). They score the same period the
-> model was trained on, so they are not comparable with the new test-period
-> results. Run `python -m src.pipeline` and then
-> `python -m src.evaluation.report` to get the current figures.
+Isolation Forest is fitted on the days before **29 Oct 2010** and evaluated
+on the later, unseen days (122,217 user-days, 415 of them malicious). The
+alert threshold is the 99th percentile of *training* scores (0.0823).
 
-Previous result: at the 99th-percentile alert threshold, Isolation Forest reaches **precision
-≈ 0.018, recall ≈ 0.062, F1 ≈ 0.028, PR-AUC ≈ 0.014**, against a statistical
-max‑|z| baseline of precision ≈ 0.003 and recall ≈ 0.009. Isolation Forest is
-roughly 5–7× better than the statistical baseline on every metric, but the
-absolute numbers are still low: at this threshold the model catches about 6%
-of true malicious user-days, and roughly 98% of its alerts are false
-positives. This is an early-stage detector, not a production-ready one — see
-[Design decisions and limitations](#design-decisions-and-limitations) for why,
-and [Evaluation notebook](#evaluation-notebook) for the full breakdown.
-`n_estimators=200` and `contamination="auto"` were used as reasonable
-defaults; hyperparameters have not been tuned via grid or random search.
+| Test period | Precision | Recall | F1 | PR-AUC | Alerts |
+|---|---|---|---|---|---|
+| **Isolation Forest** | **0.028** | **0.070** | **0.040** | **0.015** | 1,025 |
+| Max-\|z\| baseline | 0.007 | 0.022 | 0.011 | 0.007 | 1,213 |
+| Random guessing | 0.0034 | - | - | 0.0034 | - |
+
+- Only 0.34% of test user-days are malicious, so random alerting would reach a
+  precision of about 0.0034. Isolation Forest is **about 8× better than
+  random**, and about 3.8× (precision) and 3.2× (recall) better than the
+  statistical baseline.
+- The training threshold flagged 0.84% of test days, close to the intended 1%,
+  so behaviour did not drift much between the two periods.
+- That is about 8 alerts a day for the whole organisation, 29 of which were
+  true malicious days.
+
+Recall per CERT scenario (test period):
+
+| Scenario | Malicious days | Caught | Recall |
+|---|---|---|---|
+| r4.2-1 | 28 | 2 | 0.071 |
+| r4.2-2 | 375 | 25 | 0.067 |
+| r4.2-3 | 12 | 2 | 0.167 |
+
+r4.2-2 makes up 90% of malicious test days and remains the hardest scenario
+(see [Design decisions and limitations](#design-decisions-and-limitations)).
+The r4.2-1 and r4.2-3 figures come from very few days and should not be read
+as reliable. `python -m src.evaluation.report` also prints how many *insiders*
+received at least one alert on a malicious day, which matches how an analyst
+team works better than day-level recall does.
+
+These numbers are an improvement over the previous version (precision 0.018,
+recall 0.062, F1 0.028, PR-AUC 0.014), even though that version was scored on
+the same days it was trained on and used a more generous PR-AUC formula. The
+absolute numbers are still low: about 97% of alerts are false positives. This
+is an early-stage, analyst-assistive detector, not a production-ready one.
+`n_estimators=200` and `contamination="auto"` are reasonable defaults and have
+not been tuned.
 
 ## Architecture
 
@@ -62,14 +85,11 @@ experimental autoencoder train without ground-truth label filtering.
 
 ## Reproducibility note
 
-The project previously computed logon features over both `Logon` and `Logoff`
-events. That implementation defect has been corrected: login count and login
-time features now use only `Logon` events. Consequently, prior published model
-metrics are not presented as current results. Re-run the pipeline and notebook
-against the downloaded data to produce the reproducible, corrected benchmark.
-
-This is intentional: keeping stale scores would be less credible than making a
-methodological correction explicit.
+Earlier versions counted Logoff events as logins, filled cold-start z-scores
+with 0, and scored the same period they were trained on. All three were
+corrected before the results above were produced. Re-running
+`python -m src.pipeline` and `python -m src.evaluation.report` on the CERT
+r4.2 data reproduces them (`RANDOM_SEED = 42`).
 
 ## Dataset and data policy
 
@@ -207,3 +227,8 @@ result is negative: r4.2-2's weak, sustained behavior overlaps normal user
 variance, and neither a frozen anchor baseline nor HTTP aggregates materially
 resolved that limitation. This project shows both what worked and why a tempting
 complexity increase was not adopted.
+
+A second talking point is evaluation honesty: moving from scoring the training
+period to a forward-looking time split, and fixing two silent z-score bugs
+(cold-start rows and zero-variance users), made the evaluation stricter *and*
+improved every Isolation Forest metric.

@@ -50,6 +50,34 @@ def scenario_recall(scored: pd.DataFrame, score_col: str = "if_anomaly_score") -
     )
 
 
+def insiders_caught(scored: pd.DataFrame, score_col: str = "if_anomaly_score") -> pd.DataFrame:
+    """How many malicious users got at least one alert on one of their malicious test days.
+
+    Day-level recall can look low because an insider may be active for many days.
+    An analyst only needs one good alert to open an investigation, so this
+    counts people instead of days.
+    """
+    threshold = train_threshold(scored, score_col)
+    test = scored[(scored["split"] == "test") & (scored["is_malicious"] == 1)].copy()
+    test["caught"] = test[score_col] >= threshold
+
+    per_user = test.groupby(["scenario_group", "user"])["caught"].any().reset_index()
+    summary = (
+        per_user.groupby("scenario_group")["caught"]
+        .agg(insiders="count", caught="sum")
+        .reset_index()
+    )
+
+    total = pd.DataFrame([{
+        "scenario_group": "all",
+        "insiders": summary["insiders"].sum(),
+        "caught": summary["caught"].sum(),
+    }])
+    summary = pd.concat([summary, total], ignore_index=True)
+    summary["share_caught"] = summary["caught"] / summary["insiders"]
+    return summary
+
+
 def main() -> None:
     scored = pd.read_parquet(DATA_PROCESSED_DIR / "scored_daily.parquet")
     if "split" not in scored.columns:
@@ -66,6 +94,9 @@ def main() -> None:
     print()
     print("Isolation Forest recall per scenario (test period):")
     print(scenario_recall(scored).to_string(index=False))
+    print()
+    print("Insiders with at least one alert on a malicious test day:")
+    print(insiders_caught(scored).to_string(index=False))
 
 
 if __name__ == "__main__":
