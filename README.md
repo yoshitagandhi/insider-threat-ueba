@@ -13,6 +13,11 @@ lead, not evidence of intent and never an automated personnel decision.
 - Uses leakage-safe 14-day personal baselines: each day's baseline only sees
   earlier days (`shift(1)` before rolling aggregation).
 - Compares an interpretable max-absolute-z-score baseline with Isolation Forest.
+- Uses a time-based train/test split: Isolation Forest is fitted on the earlier
+  60% of dates and judged on the later 40% it has never seen. The alert
+  threshold is taken from the training period only.
+- Explains every scored day with a plain-English `top_reasons` column, for
+  example `USB activity (+4.2σ), Distinct PCs used (+3.0σ)`.
 - Evaluates with precision, recall, F1, PR-AUC, scenario breakdowns, a PR curve,
   confusion matrix, and threshold-sensitivity analysis.
 - Documents a real limitation: the sustained, low-and-slow r4.2-2 scenario is
@@ -20,7 +25,14 @@ lead, not evidence of intent and never an automated personnel decision.
 
 ## Headline result
 
-At the 99th-percentile alert threshold, Isolation Forest reaches **precision
+> **Re-run needed.** The numbers below were produced *before* the November 2026
+> improvements (cold-start fix, standard-deviation floor, two new features,
+> time-based split, average-precision PR-AUC). They score the same period the
+> model was trained on, so they are not comparable with the new test-period
+> results. Run `python -m src.pipeline` and then
+> `python -m src.evaluation.report` to get the current figures.
+
+Previous result: at the 99th-percentile alert threshold, Isolation Forest reaches **precision
 ≈ 0.018, recall ≈ 0.062, F1 ≈ 0.028, PR-AUC ≈ 0.014**, against a statistical
 max‑|z| baseline of precision ≈ 0.003 and recall ≈ 0.009. Isolation Forest is
 roughly 5–7× better than the statistical baseline on every metric, but the
@@ -38,8 +50,9 @@ defaults; hyperparameters have not been tuned via grid or random search.
 CERT event CSVs
   → per-user/day features
   → 14-day historical personal baseline
-  → z-score deviation features
-  → Isolation Forest anomaly score
+  → z-score deviation features (cold-start days left unscored)
+  → time-based split: fit on earlier dates, score later dates
+  → Isolation Forest anomaly score + top_reasons explanation
   → CERT answer-file labels for offline evaluation
   → Streamlit analyst dashboard
 ```
@@ -89,8 +102,12 @@ python -m venv .venv
 .venv\Scripts\activate             # Windows
 pip install -r requirements-dev.txt
 python -m src.pipeline
+python -m src.evaluation.report
 streamlit run dashboard/app.py
 ```
+
+`src.evaluation.report` prints the test-period precision, recall, F1 and PR-AUC
+for both models, plus Isolation Forest recall for each CERT scenario.
 
 The pipeline reads multi-gigabyte event data and is I/O and hardware dependent;
 allow time accordingly. It writes `data/processed/scored_daily.parquet` and an
@@ -125,6 +142,7 @@ src/
   baselines/                   # personal and anchored baselines
   models/                      # Isolation Forest and optional autoencoder
   evaluation/                  # labels, metrics, charts, error analysis
+  evaluation/report.py         # test-period evaluation report
 dashboard/app.py               # cached Streamlit risk triage view
 notebooks/01_eda.ipynb         # EDA and corrected benchmark workflow
 tests/                         # unit and evaluation smoke tests
@@ -138,8 +156,10 @@ pytest
 ```
 
 The test suite covers feature correctness (including exclusion of logoff
-events), leakage/cold-start behavior, zero-variance deviations, fixed anchor
-baselines, and evaluation/error-categorization smoke cases. GitHub Actions runs
+events and the distinct-PC count), leakage/cold-start behavior, zero-variance
+deviations, the standard-deviation floor, `top_reasons` wording, the time-based
+split, train-only thresholds, fixed anchor baselines, and
+evaluation/error-categorization smoke cases. GitHub Actions runs
 the suite on Python 3.10, 3.11, and 3.12 for pushes and pull requests.
 
 ## Design decisions and limitations
@@ -151,18 +171,27 @@ the suite on Python 3.10, 3.11, and 3.12 for pushes and pull requests.
   calibration period is unscored and later baselines are frozen, so it cannot
   absorb later behavior.
 - Cold-start users remain unscored until three historical days exist; the system
-  does not fabricate a population baseline for them.
-- This offline benchmark scores the same historical period used for unsupervised
-  fitting. That is useful for retrospective anomaly analysis, but it is not a
-  substitute for a forward-looking deployment validation. The notebook and
-  interview discussion call this limitation out explicitly.
+  does not fabricate a population baseline for them. (An earlier version filled
+  their z-scores with 0, which silently scored them as perfectly normal. That
+  has been fixed: their z-scores now stay empty and the rows are skipped.)
+- Each feature's standard deviation is raised to a small floor (1 event, or 0.1
+  for the external-recipient ratio) before computing z-scores. Without it, a
+  user who had never used a USB drive (std = 0) got a z-score of 0 on the day
+  they first plugged one in, which hid exactly the behaviour we want to see.
+- Two features were added: `distinct_pcs` (number of different machines logged
+  into that day) and `first_logon_hour`. On days with no logon, the first logon
+  hour is carried forward from the user's previous day rather than set to 0,
+  which would look like a midnight login.
+- Isolation Forest is fitted on the first 60% of dates and evaluated on the last
+  40%. The alert threshold is the 99th percentile of *training* scores. The
+  training period still contains some malicious days; that is acceptable for an
+  unsupervised model because labels are never used for fitting.
 - Feature-level behavioral anomaly scores do not establish malicious intent.
 
 ## Possible next steps
 
-- Add a temporal train/validation split (fit on an earlier window, score a
-  later window) instead of retrospectively scoring the same historical period
-  used for fitting — the natural next step toward a deployable evaluation.
+- Try a rolling (walk-forward) split, refitting every month, instead of one
+  fixed cut-off date.
 - Run a hyperparameter search over Isolation Forest's `n_estimators` and
   `contamination`, which are currently reasonable defaults rather than tuned
   values.

@@ -21,27 +21,14 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from src.utils.config import DATA_PROCESSED_DIR
+from src.baselines.personal_baseline import FEATURE_LABELS
+from src.utils.config import ALERT_PERCENTILE, DATA_PROCESSED_DIR
 
 
-FEATURE_LABELS = {
-    "logon_count": "Login frequency",
-    "after_hours_logon_count": "After-hours logins",
-    "usb_connect_count": "USB activity",
-    "device_event_count": "Device activity",
-    "file_event_count": "File activity",
-    "unique_filenames": "Unique files",
-    "email_count": "Email activity",
-    "total_attachments": "Email attachments",
-    "external_recipient_ratio": "External recipients",
-}
 BASELINE_FEATURES = ["logon_count", "file_event_count", "usb_connect_count", "email_count"]
 
 st.set_page_config(page_title="Kestrel", page_icon=":material/shield:", layout="wide", initial_sidebar_state="collapsed")
 
-# -----------------------------------------------------------------------------
-# UI TOKENS — derived from the supplied screenshots
-# -----------------------------------------------------------------------------
 st.html(
     """
     <style>
@@ -348,9 +335,6 @@ st.html(
 )
 
 
-# -----------------------------------------------------------------------------
-# Existing data/model layer — intentionally unchanged in substance.
-# -----------------------------------------------------------------------------
 @st.cache_data(show_spinner="Loading behavioral signals…")
 def load_scored_data(path: str) -> pd.DataFrame:
     data = pd.read_parquet(path).copy()
@@ -430,7 +414,6 @@ def section_label(text: str) -> None:
     st.markdown(f'<div class="detail-rule"></div><div class="detail-label">{text}</div>', unsafe_allow_html=True)
 
 
-# Load scored data.
 data_path = DATA_PROCESSED_DIR / "scored_daily.parquet"
 if not data_path.exists():
     st.error("Scored data is not available yet. Run the pipeline first: `python -m src.pipeline`", icon=":material/error:")
@@ -441,12 +424,12 @@ except (OSError, ValueError) as error:
     st.error(f"Could not load scored data: {error}", icon=":material/error:")
     st.stop()
 
-threshold = float(scored["if_anomaly_score"].quantile(0.99))
+if "split" in scored.columns:
+    threshold_source = scored[scored["split"] == "train"]
+else:
+    threshold_source = scored
+threshold = float(threshold_source["if_anomaly_score"].quantile(ALERT_PERCENTILE / 100))
 
-# -----------------------------------------------------------------------------
-# FILTERS — three focused controls with the same filtering behavior as the
-# original combined Filter popover.
-# -----------------------------------------------------------------------------
 header_col, filter_col = st.columns([7.35, 2.65], vertical_alignment="center")
 with header_col:
     st.markdown(
@@ -478,8 +461,6 @@ with filter_col:
     scope = st.session_state.get("time_scope", "All available")
     custom_dates = st.session_state.get("time_scope_custom_dates")
     if scope == "Custom range":
-        # The date widget remains inside the Time range popover; retain its
-        # current value for the filtering pass below.
         custom_dates = custom_dates
     else:
         custom_dates = None
@@ -544,9 +525,6 @@ daily["primary_trigger"] = [largest_driver(working.loc[index])[0] for index in d
 
 st.markdown('<div class="masthead-divider"></div>', unsafe_allow_html=True)
 
-# -----------------------------------------------------------------------------
-# Reference hero + Top risk users
-# -----------------------------------------------------------------------------
 hero_col, risk_col = st.columns([2.22, 1.0], gap="large", vertical_alignment="top")
 
 with hero_col:
@@ -589,18 +567,13 @@ with risk_col:
     max_score = max(float(top_users["if_anomaly_score"].max()), 0.001) if not top_users.empty else 1
     for row in top_users.itertuples(index=False):
         ratio = max(0.12, min(1.0, float(row.if_anomaly_score) / max_score))
-        # Four short segments + score capsule reproduce the reference bar treatment.
         filled = max(1, min(4, round(ratio * 4)))
         segments = "".join(f'<span class="risk-seg {"s" + str(i + 1) if i < filled else ""}"></span>' for i in range(4))
-        # Score sits in the last segment when the bar is nearly full, matching the reference rhythm.
         st.markdown(
             f'<div class="risk-row"><div class="risk-name">{row.user}</div><div class="risk-track">{segments}<span class="risk-seg s5 risk-score">{row.if_anomaly_score:.3f}</span></div></div>',
             unsafe_allow_html=True,
         )
 
-# -----------------------------------------------------------------------------
-# Reference lower row: users under review + case queue
-# -----------------------------------------------------------------------------
 st.markdown('<div style="height:.72rem"></div>', unsafe_allow_html=True)
 review_col, case_col = st.columns([1.72, 1.0], gap="large", vertical_alignment="top")
 
@@ -633,11 +606,6 @@ with case_col:
             unsafe_allow_html=True,
         )
 
-# -----------------------------------------------------------------------------
-# Existing analytical / investigation content remains below the reference UI.
-# It is intentionally secondary so the first screen reads as an investigation
-# product rather than a conventional analytics report.
-# -----------------------------------------------------------------------------
 if selected_user != "All users":
     user_data = working.sort_values("day").copy()
     latest = user_data.iloc[-1]
@@ -645,7 +613,6 @@ if selected_user != "All users":
     label_class = "risk-label" if status == "HIGH RISK" else "neutral-label"
 
     section_label("USER THREAT PROFILE")
-    # Render the three profile cards directly on the page; no outer container.
     st.markdown(
         f"""
         <div class="detail-card">
@@ -692,9 +659,14 @@ if selected_user != "All users":
         driver_info = evidence.apply(largest_driver, axis=1)
         evidence["Primary trigger"] = [f"{name} ({value:.1f}σ)" for name, value in driver_info]
         evidence["Review state"] = evidence["if_anomaly_score"].ge(threshold).map({True: "Needs review", False: "Below threshold"})
+        evidence_columns = ["day", "Review state", "if_anomaly_score", "Primary trigger"]
+        if "top_reasons" in evidence.columns:
+            evidence_columns.append("top_reasons")
+        evidence_columns += ["logon_count", "file_event_count", "usb_connect_count", "email_count"]
         st.dataframe(
-            evidence[["day", "Review state", "if_anomaly_score", "Primary trigger", "logon_count", "file_event_count", "usb_connect_count", "email_count"]],
+            evidence[evidence_columns],
             column_config={
+                "top_reasons": st.column_config.TextColumn("Why it was flagged", width="large"),
                 "day": st.column_config.DateColumn("Date", format="DD MMM YYYY"),
                 "if_anomaly_score": st.column_config.NumberColumn("Anomaly score", format="%.3f"),
                 "logon_count": st.column_config.NumberColumn("Logins"),

@@ -1,32 +1,65 @@
-import numpy as np
 import pandas as pd
 
-from src.baselines.personal_baseline import FEATURE_COLS
+from src.baselines.personal_baseline import FEATURE_COLS, FEATURE_LABELS
+
+DEFAULT_STD_FLOOR = 1.0
+STD_FLOOR = {
+    "external_recipient_ratio": 0.1,
+}
 
 
 def add_deviation_features(daily: pd.DataFrame) -> pd.DataFrame:
+    """Add one z-score column per feature: how unusual today is for this user.
+
+    Two rules keep the z-scores honest:
+
+    1. Cold start: if a user has no baseline yet (fewer than 3 earlier days),
+       the z-score stays empty (NaN). Those days are not scored at all instead
+       of pretending they are perfectly normal.
+    2. Small spread: if a user's history barely varies (for example they have
+       never used a USB drive, so std = 0), dividing by that std would give
+       0 or infinity. The std is raised to a minimum "floor" first, so a first
+       ever USB connection shows up as a clear positive deviation.
+    """
     daily = daily.copy()
 
     for col in FEATURE_COLS:
-        mean_col = f"{col}_baseline_mean"
-        std_col = f"{col}_baseline_std"
-        dev_col = f"{col}_zscore"
+        mean = daily[f"{col}_baseline_mean"]
+        std = daily[f"{col}_baseline_std"]
+        floor = STD_FLOOR.get(col, DEFAULT_STD_FLOOR)
 
-        std_safe = daily[std_col].replace(0, np.nan)
-
-        daily[dev_col] = (
-            daily[col] - daily[mean_col]
-        ) / std_safe
-
-        daily[dev_col] = daily[dev_col].fillna(0)
+        std_safe = std.clip(lower=floor)
+        daily[f"{col}_zscore"] = (daily[col] - mean) / std_safe
 
     return daily
 
 
 def statistical_anomaly_score(daily: pd.DataFrame) -> pd.Series:
-    zscore_cols = [
-        f"{c}_zscore"
-        for c in FEATURE_COLS
-    ]
+    """Largest absolute z-score of the day. NaN for cold-start days."""
+    zscore_cols = [f"{c}_zscore" for c in FEATURE_COLS]
+    return daily[zscore_cols].abs().max(axis=1, skipna=False)
 
-    return daily[zscore_cols].abs().max(axis=1)
+
+def top_reasons(row: pd.Series, n: int = 3) -> str:
+    """Turn the biggest z-scores of one day into a short, readable explanation.
+
+    Example output: "USB activity (+4.2σ), File activity (+3.1σ)"
+    """
+    zscores = {}
+    for col in FEATURE_COLS:
+        value = row[f"{col}_zscore"]
+        if pd.notna(value):
+            zscores[col] = value
+
+    biggest = sorted(zscores, key=lambda col: abs(zscores[col]), reverse=True)[:n]
+
+    parts = []
+    for col in biggest:
+        parts.append(f"{FEATURE_LABELS[col]} ({zscores[col]:+.1f}σ)")
+    return ", ".join(parts)
+
+
+def add_top_reasons(daily: pd.DataFrame, n: int = 3) -> pd.DataFrame:
+    daily = daily.copy()
+    daily["top_reasons"] = daily.apply(top_reasons, axis=1, n=n)
+    return daily

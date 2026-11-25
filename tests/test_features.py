@@ -13,7 +13,7 @@ def test_logon_features_counts_correctly():
     result = logon_features(logon)
     day1 = result[result["day"] == pd.Timestamp("2010-01-01").date()].iloc[0]
     assert day1["logon_count"] == 2
-    assert day1["after_hours_logon_count"] == 1  # the 23:00 login
+    assert day1["after_hours_logon_count"] == 1
 
 
 def test_logon_features_exclude_logoff_events():
@@ -56,3 +56,15 @@ def test_email_features_include_cc_and_bcc_recipients():
     })
     result = email_features(email).iloc[0]
     assert result["external_recipient_ratio"] == 2 / 3
+
+
+def test_logon_features_count_distinct_pcs():
+    logon = pd.DataFrame({
+        "id": ["1", "2", "3"],
+        "date": pd.to_datetime(["2010-01-01 09:00", "2010-01-01 11:00", "2010-01-01 13:00"]),
+        "user": ["A", "A", "A"],
+        "pc": ["PC1", "PC2", "PC1"],
+        "activity": ["Logon", "Logon", "Logon"],
+    })
+    result = logon_features(logon).iloc[0]
+    assert result["distinct_pcs"] == 2

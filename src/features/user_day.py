@@ -6,19 +6,23 @@ def _to_day(df: pd.DataFrame) -> pd.Series:
 
 
 def logon_features(logon: pd.DataFrame) -> pd.DataFrame:
+    """Daily login behaviour, built from Logon rows only (Logoff rows are ignored).
+
+    distinct_pcs counts how many different machines the user logged into that
+    day. Logging into a colleague's or supervisor's PC is a classic insider signal.
+    """
     logon = logon.copy()
     logon["day"] = _to_day(logon)
     logon["hour"] = logon["date"].dt.hour
     is_logon = logon["activity"].str.lower().eq("logon")
 
-    # CERT's logon feed includes matching Logoff rows. These features describe
-    # login behavior only, so Logoff events are deliberately excluded.
     logon_events = logon[is_logon].copy()
     grouped = logon_events.groupby(["user", "day"])
     features = grouped.agg(
         logon_count=("id", "count"),
         first_logon_hour=("hour", "min"),
         last_logon_hour=("hour", "max"),
+        distinct_pcs=("pc", "nunique"),
     ).reset_index()
 
     after_hours = logon[
@@ -121,11 +125,12 @@ def email_features(email_df: pd.DataFrame) -> pd.DataFrame:
         columns=["total_recipients", "total_external"]
     )
 
-# NOTE: implemented as a documented experiment and deliberately not wired into
-# run_pipeline(). Re-benchmark it after the corrected logon-feature change
-# before making any current performance claim about HTTP features.
 
 def http_features(raw_path, chunksize: int = 500_000) -> pd.DataFrame:
+    """Experimental HTTP features, deliberately not wired into run_pipeline().
+
+    Re-benchmark these before making any performance claim about HTTP features.
+    """
     parts = []
 
     usecols = ["id", "date", "user", "url"]
