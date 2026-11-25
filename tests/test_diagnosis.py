@@ -24,12 +24,15 @@ def test_rule_diagnosis_explains_each_insider():
         "usb_connect_count": [0] * 4, "first_usb_ever": [0] * 4, "rule_alert": [0] * 4,
         "is_malicious": [0] * 4, "scenario_group": [None] * 4, "if_anomaly_score": [0.0, 0.1, 0.2, 0.3],
     })
-    earlier_usb = make_user("A", [1, 0, 2], [1, 0, 0], [0, 0, 0], [0, 0, 1])
-    rule_hit = make_user("B", [0, 0, 3], [0, 0, 1], [0, 0, 1], [0, 0, 1])
+    early = make_user("A", [1, 0, 2], [1, 0, 0], [1, 0, 0], [0, 0, 1])
+    on_day = make_user("B", [0, 0, 3], [0, 0, 1], [0, 0, 1], [0, 0, 1])
     daytime = make_user("C", [0, 0, 3], [0, 0, 1], [0, 0, 0], [0, 0, 1])
+    earlier_daytime = make_user("D", [2, 0, 3], [1, 0, 0], [0, 0, 0], [0, 0, 1])
 
-    result = rule_diagnosis(pd.concat([train, earlier_usb, rule_hit, daytime])).set_index("user")
+    result = rule_diagnosis(pd.concat([train, early, on_day, daytime, earlier_daytime])).set_index("user")
 
-    assert result.loc["A", "why"].startswith("used USB before the attack")
-    assert result.loc["B", "why"] == "rule fired on a malicious day"
-    assert result.loc["C", "why"] == "first USB day had no after-hours activity"
+    assert result.loc["A", "why"] == "fired 2d early"
+    assert result.loc["A", "days_before"] == 2
+    assert result.loc["B", "why"] == "fired on attack day"
+    assert result.loc["C", "why"] == "no after-hours activity"
+    assert result.loc["D", "why"] == "earlier USB, no after-hours"

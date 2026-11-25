@@ -54,6 +54,7 @@ def test_split_by_date_puts_earlier_days_in_train():
 def test_report_threshold_comes_from_train_rows_only():
     scored = pd.DataFrame({
         "split": ["train"] * 4 + ["test"] * 4,
+        "day": pd.date_range("2010-01-01", periods=8).date,
         "user": ["X", "X", "X", "X", "Y", "A", "Y", "B"],
         "scenario_group": [None, None, None, None, None, "r4.2-1", None, "r4.2-2"],
         "is_malicious": [0, 0, 0, 0, 0, 1, 0, 1],
@@ -68,6 +69,7 @@ def test_report_threshold_comes_from_train_rows_only():
     assert iforest["recall"] == 1.0
     assert iforest["precision"] == 1.0
     assert iforest["insiders_caught"] == "2/2"
+    assert iforest["incl_7d_early"] == "2/2"
 
 
 def test_insiders_caught_counts_people_not_days():
@@ -96,3 +98,28 @@ def test_user_risk_is_a_backward_looking_max():
     result = add_user_risk(scored, window=2)
 
     assert result["user_risk_7d"].round(2).tolist() == [0.0, 0.0, 0.9, 0.9]
+
+
+def test_early_warning_counts_alerts_just_before_the_attack():
+    from src.evaluation.report import insiders_caught, insiders_caught_early
+
+    days = pd.date_range("2010-01-01", periods=10)
+    scored = pd.DataFrame({
+        "user": ["T"] * 4 + ["A"] * 3,
+        "day": list(days[:4]) + list(days[5:8]),
+        "split": ["train"] * 4 + ["test"] * 3,
+        "is_malicious": [0, 0, 0, 0, 0, 0, 1],
+        "scenario_group": [None] * 6 + ["r4.2-1"],
+        "if_anomaly_score": [0.1, 0.2, 0.3, 0.4, 0.9, 0.0, 0.0],
+    })
+
+    assert insiders_caught(scored, percentile=100).iloc[-1]["caught"] == 0
+    assert insiders_caught_early(scored, percentile=100, lookback_days=7).iloc[-1]["caught"] == 1
+    assert insiders_caught_early(scored, percentile=100, lookback_days=1).iloc[-1]["caught"] == 0
+
+
+def test_risk_score_is_capped_combined_score():
+    from src.models.combined import add_risk_score
+
+    scored = pd.DataFrame({"combined_score": [0.5, 0.999, 10.4], "if_anomaly_score": [0.0, 0.0, 0.0]})
+    assert add_risk_score(scored)["risk_score"].tolist() == [0.5, 0.999, 1.0]

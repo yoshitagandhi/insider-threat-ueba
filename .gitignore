@@ -21,3 +21,6 @@ models/*.joblib
 
 .DS_Store
 Thumbs.db
+
+data/processed/*.parquet
+*.egg-info/

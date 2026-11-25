@@ -30,3 +30,19 @@ def add_combined_score(scored: pd.DataFrame) -> pd.DataFrame:
     risk_rank = train_percentile(scored, "user_risk_7d")
     scored["combined_score"] = np.maximum(daily_rank, risk_rank) + RULE_BOOST * scored["rule_alert"]
     return scored
+
+
+def add_risk_score(scored: pd.DataFrame) -> pd.DataFrame:
+    """The single score the dashboard ranks users by.
+
+    It is the combined score capped at 1.0, so it reads as a percentile: 0.995
+    means "more unusual than 99.5% of training days". Rule days (which carry
+    the +10 boost) show as 1.0. Older files without combined_score fall back
+    to the daily Isolation Forest score.
+    """
+    scored = scored.copy()
+    if "combined_score" in scored.columns:
+        scored["risk_score"] = scored["combined_score"].clip(upper=1.0)
+    else:
+        scored["risk_score"] = scored["if_anomaly_score"]
+    return scored

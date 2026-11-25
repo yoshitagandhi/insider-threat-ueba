@@ -41,39 +41,46 @@ user-days, 415 of them malicious, belonging to 34 insiders. Every threshold is
 the 99th percentile of *training* scores, so no test information is used to
 set it.
 
-| Test period | Insiders caught | Precision | Recall (days) | F1 | PR-AUC | Alerts |
+| Test period | Insiders caught | Precision | Recall (days) | F1 | PR-AUC | Alerts per day |
 |---|---|---|---|---|---|---|
-| **Hybrid: Isolation Forest + USB rule** | **21/34 (62%)** | **0.030** | 0.072 | **0.043** | 0.024 | 995 |
-| Isolation Forest (daily) | 20/34 | 0.029 | 0.070 | 0.041 | 0.023 | 997 |
-| 7-day user risk (max) | 16/34 | 0.038 | 0.094 | 0.054 | 0.035 | 1,039 |
-| Max-\|z\| baseline | 8/34 | 0.008 | 0.022 | 0.011 | 0.007 | 1,185 |
+| **Combined queue: daily OR 7-day risk + rule** | **24/34 (71%)** | **0.041** | **0.106** | **0.059** | 0.034 | 5.3 |
+| Hybrid: Isolation Forest + USB rule | 21/34 | 0.030 | 0.072 | 0.043 | 0.024 | 5.0 |
+| Isolation Forest (daily) | 20/34 | 0.029 | 0.070 | 0.041 | 0.023 | 5.0 |
+| 7-day user risk (max) | 16/34 | 0.038 | 0.094 | 0.054 | **0.035** | 5.2 |
+| Max-\|z\| baseline | 8/34 | 0.008 | 0.022 | 0.011 | 0.007 | 5.9 |
 | Random guessing | - | 0.0034 | - | - | 0.0034 | - |
 
-The combined queue (daily score OR 7-day risk, plus the rule) is new in this
-commit. Run `python -m src.evaluation.report` to add its row.
-
-- About **8 alerts a day** for the whole organisation, and the hybrid model
-  catches **62% of insiders** at that budget.
-- Precision is about **9× better than random** (only 0.34% of test days are
-  malicious) and 4× better than the statistical baseline.
-- PR-AUC rose from 0.015 (v2) to 0.024 for the daily model, a 59% gain, after
-  the feature set was chosen on a validation window.
+- About **5 alerts a day** for the whole organisation (a ~1,000-person
+  company), and the combined queue catches **71% of insiders** at that budget.
+- Precision is about **12× better than random** (only 0.34% of test days are
+  malicious) and 5× better than the statistical baseline.
+- The combined queue wins at every alert budget: at about 10 alerts a day it
+  catches **29 of 34** insiders, and at about 2.7 a day it still catches 19.
 
 Insiders caught per scenario (at least one alert on a malicious test day):
 
-| Scenario | Insiders | Isolation Forest | Hybrid | 7-day risk (max) | Baseline |
-|---|---|---|---|---|---|
-| r4.2-1 | 13 | 4 | 4 | **11** | 2 |
-| r4.2-2 | 16 | **14** | **14** | 4 | 6 |
-| r4.2-3 | 5 | 2 | **3** | 1 | 0 |
-| **All** | **34** | 20 | **21** | 16 | 8 |
+| Scenario | Insiders | Isolation Forest | Hybrid | 7-day risk (max) | **Combined** | Baseline |
+|---|---|---|---|---|---|---|
+| r4.2-1 | 13 | 4 | 4 | **11** | **11** | 2 |
+| r4.2-2 | 16 | **14** | **14** | 4 | 10 | 6 |
+| r4.2-3 | 5 | 2 | **3** | 1 | **3** | 0 |
+| **All** | **34** | 20 | 21 | 16 | **24** | 8 |
 
-The daily score and the 7-day risk catch almost opposite scenarios. The daily
-score catches the long-running r4.2-2 insiders; the 7-day max catches the
-short r4.2-1 bursts. That is why v4 also tests a **combined queue** that gives
-each score about half of the same alert budget. The report also prints a
-per-insider table explaining why the first-ever-USB rule did or did not fire
-for each r4.2-1 insider.
+The daily score and the 7-day risk catch almost opposite scenarios: the daily
+score catches the long-running r4.2-2 insiders, and the 7-day max catches the
+short r4.2-1 bursts. The combined queue gives each about half of the same
+alert budget. It turns each score into a training percentile and takes the
+higher one, so no weights are picked by hand.
+
+**The rule is an early warning.** The rule diagnosis shows that the
+first-ever-USB-after-hours rule fired for **all 13 r4.2-1 insiders**, on
+their first USB day, 1 to 3 days *before* the first day CERT labels as
+malicious. It fired on only 36 user-days in 17 months. Day-level labels count
+those warnings as false positives, so the report also counts insiders alerted
+*during the attack or in the 7 days before it*, measured the same way for
+every score, with a chance check (how often a random 8-day window of a benign
+user contains an alert). Run `python -m src.evaluation.report` to see those
+numbers.
 
 ### Progress across versions
 
@@ -82,7 +89,8 @@ for each r4.2-1 insider.
 | v1 | Scored on the training period itself | (not measured) | 0.018 | 0.014 |
 | v2 | Cold-start and zero-variance fixes, time split | 18/34 | 0.028 | 0.015 |
 | v3 | Three r4.2-1 features fed into the model | 12/34 | 0.015 | 0.014 |
-| **v4** | Validation-selected features + rule | **21/34** | **0.030** | **0.024** |
+| v4 hybrid | Validation-selected features + rule | 21/34 | 0.030 | 0.024 |
+| **v4 combined** | + daily OR 7-day risk queue | **24/34** | **0.041** | **0.034** |
 
 v1 was scored on the same days it was trained on and used a more generous
 PR-AUC formula, so its row is not directly comparable. Most alerts are still
@@ -158,7 +166,7 @@ CERT event CSVs
   → 7-day user risk score (rolling max per user)
   → combined queue: daily score OR 7-day risk, at the same alert budget
   → CERT answer-file labels for offline evaluation
-  → Streamlit analyst dashboard
+  → Streamlit analyst dashboard, ranked by the combined risk score
 ```
 
 `is_malicious` is never used to fit a model. It is used for test-period
@@ -266,7 +274,7 @@ src/
   models/combined.py           # combined queue from training percentiles
   evaluation/diagnosis.py      # why the rule did or did not catch each insider
 reports/                       # charts and tables written by analysis.py
-dashboard/app.py               # cached Streamlit risk triage view
+dashboard/app.py               # Streamlit triage view, ranked by combined risk
 notebooks/01_eda.ipynb         # EDA and corrected benchmark workflow
 tests/                         # unit and evaluation smoke tests
 .github/workflows/tests.yml    # Python 3.10–3.12 CI

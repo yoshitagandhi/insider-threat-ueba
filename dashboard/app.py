@@ -2,7 +2,7 @@
 
 The analytical/data layer is intentionally preserved from the existing app:
 - scored_daily.parquet loading
-- Isolation Forest anomaly scores and threshold
+- risk score (combined daily + 7-day queue) and threshold
 - user peak selection
 - behavioral deviation calculations
 - deep investigation/evidence table
@@ -22,6 +22,7 @@ import pandas as pd
 import streamlit as st
 
 from src.baselines.personal_baseline import FEATURE_LABELS
+from src.models.combined import add_combined_score, add_risk_score
 from src.utils.config import ALERT_PERCENTILE, DATA_PROCESSED_DIR
 
 
@@ -338,6 +339,9 @@ st.html(
 @st.cache_data(show_spinner="Loading behavioral signals…")
 def load_scored_data(path: str) -> pd.DataFrame:
     data = pd.read_parquet(path).copy()
+    if "split" in data.columns and "combined_score" not in data.columns and "rule_alert" in data.columns:
+        data = add_combined_score(data)
+    data = add_risk_score(data)
     data["day"] = pd.to_datetime(data["day"])
     return data
 
@@ -362,8 +366,8 @@ def largest_driver(row) -> tuple[str, float]:
 def user_peaks(data: pd.DataFrame) -> pd.DataFrame:
     if data.empty:
         return data.copy()
-    peaks = data.loc[data.groupby("user")["if_anomaly_score"].idxmax()].copy()
-    return peaks.sort_values("if_anomaly_score", ascending=False)
+    peaks = data.loc[data.groupby("user")["risk_score"].idxmax()].copy()
+    return peaks.sort_values("risk_score", ascending=False)
 
 
 def apply_scope(data: pd.DataFrame, scope: str, custom_range: tuple | list | None) -> pd.DataFrame:
@@ -383,8 +387,8 @@ def trend_state(daily: pd.DataFrame) -> str:
     if len(daily) < 8:
         return "LIMITED HISTORY"
     window = max(3, min(14, len(daily) // 5))
-    early = float(daily["if_anomaly_score"].iloc[:window].median())
-    recent = float(daily["if_anomaly_score"].iloc[-window:].median())
+    early = float(daily["risk_score"].iloc[:window].median())
+    recent = float(daily["risk_score"].iloc[-window:].median())
     if early and recent > early * 1.15:
         return "INCREASING"
     if early and recent < early * 0.85:
@@ -396,17 +400,17 @@ def line_chart(daily: pd.DataFrame, threshold: float) -> alt.Chart:
     """Restrained hero trend matching the reference rather than a report chart."""
     base = alt.Chart(daily).encode(
         x=alt.X("day:T", title=None, axis=alt.Axis(labels=False, ticks=False, domain=False, grid=False)),
-        y=alt.Y("if_anomaly_score:Q", title=None, axis=alt.Axis(labels=False, ticks=False, domain=False, grid=False)),
+        y=alt.Y("risk_score:Q", title=None, axis=alt.Axis(labels=False, ticks=False, domain=False, grid=False)),
         tooltip=[
             alt.Tooltip("day:T", title="Date", format="%d %b %Y"),
             alt.Tooltip("user:N", title="User"),
-            alt.Tooltip("if_anomaly_score:Q", title="Anomaly score", format=".3f"),
+            alt.Tooltip("risk_score:Q", title="Risk score", format=".3f"),
             alt.Tooltip("primary_trigger:N", title="Primary trigger"),
         ],
     )
     area = base.mark_area(color="#c7e1e8", opacity=.82, line=False)
     line = base.mark_line(color="#177b91", strokeWidth=2.35)
-    points = base.transform_filter(alt.datum.if_anomaly_score >= threshold).mark_point(color="#177b91", size=42)
+    points = base.transform_filter(alt.datum.risk_score >= threshold).mark_point(color="#177b91", size=42)
     return (area + line + points).properties(height=220).configure_view(stroke=None)
 
 
@@ -428,7 +432,7 @@ if "split" in scored.columns:
     threshold_source = scored[scored["split"] == "train"]
 else:
     threshold_source = scored
-threshold = float(threshold_source["if_anomaly_score"].quantile(ALERT_PERCENTILE / 100))
+threshold = float(threshold_source["risk_score"].quantile(ALERT_PERCENTILE / 100))
 
 header_col, filter_col = st.columns([7.35, 2.65], vertical_alignment="center")
 with header_col:
@@ -477,9 +481,9 @@ with filter_col:
 
     scoped_for_state = apply_scope(scored, scope or "All available", custom_dates)
     if risk_filter == "Needs review":
-        filter_scope = scoped_for_state[scoped_for_state["if_anomaly_score"] >= threshold]
+        filter_scope = scoped_for_state[scoped_for_state["risk_score"] >= threshold]
     elif risk_filter == "Below threshold":
-        filter_scope = scoped_for_state[scoped_for_state["if_anomaly_score"] < threshold]
+        filter_scope = scoped_for_state[scoped_for_state["risk_score"] < threshold]
     else:
         filter_scope = scoped_for_state
 
@@ -494,9 +498,9 @@ with filter_col:
 selected_user = st.session_state.get("selected_user", "All users")
 scoped = apply_scope(scored, scope or "All available", custom_dates)
 if risk_filter == "Needs review":
-    scoped = scoped[scoped["if_anomaly_score"] >= threshold]
+    scoped = scoped[scoped["risk_score"] >= threshold]
 elif risk_filter == "Below threshold":
-    scoped = scoped[scoped["if_anomaly_score"] < threshold]
+    scoped = scoped[scoped["risk_score"] < threshold]
 
 if selected_user != "All users":
     working = scoped[scoped["user"] == selected_user].copy()
@@ -508,19 +512,19 @@ if working.empty:
     st.stop()
 
 latest_by_user = working.sort_values("day").groupby("user", as_index=False).tail(1)
-high_risk_users = int((user_peaks(working)["if_anomaly_score"] >= threshold).sum())
-active_alerts = int((latest_by_user["if_anomaly_score"] >= threshold).sum())
-anomalies_detected = int((working["if_anomaly_score"] >= threshold).sum())
+high_risk_users = int((user_peaks(working)["risk_score"] >= threshold).sum())
+active_alerts = int((latest_by_user["risk_score"] >= threshold).sum())
+anomalies_detected = int((working["risk_score"] >= threshold).sum())
 
-focus_row = working.loc[working["if_anomaly_score"].idxmax()]
+focus_row = working.loc[working["risk_score"].idxmax()]
 latest_day = pd.Timestamp(focus_row["day"])
-latest_score = float(focus_row["if_anomaly_score"])
+latest_score = float(focus_row["risk_score"])
 latest_user = focus_row["user"]
-first_score = float(working.sort_values("day").iloc[0]["if_anomaly_score"])
+first_score = float(working.sort_values("day").iloc[0]["risk_score"])
 delta_pct = ((latest_score - first_score) / first_score * 100) if first_score else 0
 
-daily_idx = working.groupby("day")["if_anomaly_score"].idxmax()
-daily = working.loc[daily_idx, ["day", "user", "if_anomaly_score"]].sort_values("day").copy()
+daily_idx = working.groupby("day")["risk_score"].idxmax()
+daily = working.loc[daily_idx, ["day", "user", "risk_score"]].sort_values("day").copy()
 daily["primary_trigger"] = [largest_driver(working.loc[index])[0] for index in daily_idx]
 
 st.markdown('<div class="masthead-divider"></div>', unsafe_allow_html=True)
@@ -562,15 +566,15 @@ with hero_col:
     st.markdown('</div>', unsafe_allow_html=True)
 
 with risk_col:
-    st.markdown('<div class="side-title">Top risk users</div><div class="side-sub">By anomaly score, selected range</div>', unsafe_allow_html=True)
-    top_users = user_peaks(working).head(4)[["user", "if_anomaly_score"]]
-    max_score = max(float(top_users["if_anomaly_score"].max()), 0.001) if not top_users.empty else 1
+    st.markdown('<div class="side-title">Top risk users</div><div class="side-sub">By risk score, selected range</div>', unsafe_allow_html=True)
+    top_users = user_peaks(working).head(4)[["user", "risk_score"]]
+    max_score = max(float(top_users["risk_score"].max()), 0.001) if not top_users.empty else 1
     for row in top_users.itertuples(index=False):
-        ratio = max(0.12, min(1.0, float(row.if_anomaly_score) / max_score))
+        ratio = max(0.12, min(1.0, float(row.risk_score) / max_score))
         filled = max(1, min(4, round(ratio * 4)))
         segments = "".join(f'<span class="risk-seg {"s" + str(i + 1) if i < filled else ""}"></span>' for i in range(4))
         st.markdown(
-            f'<div class="risk-row"><div class="risk-name">{row.user}</div><div class="risk-track">{segments}<span class="risk-seg s5 risk-score">{row.if_anomaly_score:.3f}</span></div></div>',
+            f'<div class="risk-row"><div class="risk-name">{row.user}</div><div class="risk-track">{segments}<span class="risk-seg s5 risk-score">{row.risk_score:.3f}</span></div></div>',
             unsafe_allow_html=True,
         )
 
@@ -583,7 +587,7 @@ with review_col:
     review_html = '<div class="review-panel"><div class="table-head"><span>USER</span><span>PRIMARY TRIGGER</span><span>SCORE</span></div>'
     for row in review_users.itertuples(index=False):
         driver, deviation = largest_driver(row)
-        review_html += f'<div class="table-row"><span>{row.user}</span><span>{driver.replace(" activity", "").title()} · {deviation:.1f}σ</span><span>{float(row.if_anomaly_score):.3f}</span></div>'
+        review_html += f'<div class="table-row"><span>{row.user}</span><span>{driver.replace(" activity", "").title()} · {deviation:.1f}σ</span><span>{float(row.risk_score):.3f}</span></div>'
     review_html += '</div>'
     st.markdown(review_html, unsafe_allow_html=True)
 
@@ -592,7 +596,7 @@ with case_col:
     queue = user_peaks(working).head(2)
     for row in queue.itertuples(index=False):
         driver, _ = largest_driver(row)
-        high = float(row.if_anomaly_score) >= threshold
+        high = float(row.risk_score) >= threshold
         state = "High" if high else "Low"
         note = "Analyst review pending" if high else "Awaiting evidence"
         st.markdown(
@@ -609,7 +613,7 @@ with case_col:
 if selected_user != "All users":
     user_data = working.sort_values("day").copy()
     latest = user_data.iloc[-1]
-    status = "HIGH RISK" if latest["if_anomaly_score"] >= threshold else "BELOW THRESHOLD"
+    status = "HIGH RISK" if latest["risk_score"] >= threshold else "BELOW THRESHOLD"
     label_class = "risk-label" if status == "HIGH RISK" else "neutral-label"
 
     section_label("USER THREAT PROFILE")
@@ -623,7 +627,7 @@ if selected_user != "All users":
             </div>
             <div class="detail-score">
               <div class="detail-label">RISK SCORE</div>
-              <div class="detail-score-value">{latest['if_anomaly_score']:.3f}</div>
+              <div class="detail-score-value">{latest['risk_score']:.3f}</div>
             </div>
             <div class="detail-state">
               <span class="{label_class}">{status}</span>
@@ -655,14 +659,14 @@ if selected_user != "All users":
         st.caption("There is not enough baseline history to compare the selected user's latest activity.")
 
     with st.expander("Deep investigation / evidence", icon=":material/manage_search:"):
-        evidence = user_data.nlargest(min(12, len(user_data)), "if_anomaly_score").copy()
+        evidence = user_data.nlargest(min(12, len(user_data)), "risk_score").copy()
         driver_info = evidence.apply(largest_driver, axis=1)
         evidence["Primary trigger"] = [f"{name} ({value:.1f}σ)" for name, value in driver_info]
-        needs_review = evidence["if_anomaly_score"].ge(threshold)
+        needs_review = evidence["risk_score"].ge(threshold)
         if "rule_alert" in evidence.columns:
             needs_review = needs_review | evidence["rule_alert"].eq(1)
         evidence["Review state"] = needs_review.map({True: "Needs review", False: "Below threshold"})
-        evidence_columns = ["day", "Review state", "if_anomaly_score", "Primary trigger"]
+        evidence_columns = ["day", "Review state", "risk_score", "Primary trigger"]
         if "user_risk_7d" in evidence.columns:
             evidence_columns.append("user_risk_7d")
         if "top_reasons" in evidence.columns:
@@ -674,7 +678,7 @@ if selected_user != "All users":
                 "top_reasons": st.column_config.TextColumn("Why it was flagged", width="large"),
                 "user_risk_7d": st.column_config.NumberColumn("7-day risk", format="%.3f"),
                 "day": st.column_config.DateColumn("Date", format="DD MMM YYYY"),
-                "if_anomaly_score": st.column_config.NumberColumn("Anomaly score", format="%.3f"),
+                "risk_score": st.column_config.NumberColumn("Risk score", format="%.3f"),
                 "logon_count": st.column_config.NumberColumn("Logins"),
                 "file_event_count": st.column_config.NumberColumn("File actions"),
                 "usb_connect_count": st.column_config.NumberColumn("USB events"),
@@ -685,4 +689,4 @@ if selected_user != "All users":
             height=335,
         )
 
-st.caption("SYSTEM / ISOLATION FOREST · PER-USER BASELINES · ANALYST REVIEW REQUIRED FOR ALL SIGNALS")
+st.caption("SYSTEM / ISOLATION FOREST + 7-DAY RISK + USB RULE · PER-USER BASELINES · ANALYST REVIEW REQUIRED FOR ALL SIGNALS")
