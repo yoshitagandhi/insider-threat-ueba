@@ -7,6 +7,7 @@ from src.evaluation.error_analysis import categorize_errors
 from src.evaluation.evaluate import evaluate_scores
 from src.evaluation.plots import threshold_sensitivity
 from src.evaluation.report import build_report, insiders_caught, train_threshold
+from src.models.user_risk import add_user_risk
 from src.models.isolation_forest_model import save_isolation_forest, split_by_date
 
 
@@ -53,6 +54,8 @@ def test_split_by_date_puts_earlier_days_in_train():
 def test_report_threshold_comes_from_train_rows_only():
     scored = pd.DataFrame({
         "split": ["train"] * 4 + ["test"] * 4,
+        "user": ["X", "X", "X", "X", "Y", "A", "Y", "B"],
+        "scenario_group": [None, None, None, None, None, "r4.2-1", None, "r4.2-2"],
         "is_malicious": [0, 0, 0, 0, 0, 1, 0, 1],
         "if_anomaly_score": [0.1, 0.2, 0.3, 0.4, 0.1, 0.9, 0.2, 0.8],
         "stat_anomaly_score": [1, 2, 3, 4, 1, 9, 2, 8],
@@ -61,9 +64,10 @@ def test_report_threshold_comes_from_train_rows_only():
     assert train_threshold(scored, "if_anomaly_score", percentile=100) == 0.4
 
     report = build_report(scored, percentile=100)
-    iforest = report[report["model"] == "Isolation Forest"].iloc[0]
+    iforest = report[report["model"] == "Isolation Forest (daily)"].iloc[0]
     assert iforest["recall"] == 1.0
     assert iforest["precision"] == 1.0
+    assert iforest["insiders_caught"] == "2/2"
 
 
 def test_insiders_caught_counts_people_not_days():
@@ -80,3 +84,15 @@ def test_insiders_caught_counts_people_not_days():
     assert result.loc["r4.2-2", "insiders"] == 2
     assert result.loc["r4.2-2", "caught"] == 1
     assert result.loc["all", "share_caught"] == 0.5
+
+
+def test_user_risk_is_a_backward_looking_average():
+    scored = pd.DataFrame({
+        "user": ["A"] * 4,
+        "day": pd.date_range("2010-01-01", periods=4).date,
+        "if_anomaly_score": [0.0, 0.0, 0.9, 0.3],
+    })
+
+    result = add_user_risk(scored, window=2)
+
+    assert result["user_risk_7d"].round(2).tolist() == [0.0, 0.0, 0.45, 0.6]

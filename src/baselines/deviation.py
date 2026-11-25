@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.baselines.personal_baseline import FEATURE_COLS, FEATURE_LABELS
+from src.baselines.personal_baseline import FEATURE_COLS, FEATURE_LABELS, NOVELTY_LABELS
 
 DEFAULT_STD_FLOOR = 1.0
 STD_FLOOR = {
@@ -43,8 +43,14 @@ def statistical_anomaly_score(daily: pd.DataFrame) -> pd.Series:
 def top_reasons(row: pd.Series, n: int = 3) -> str:
     """Turn the biggest z-scores of one day into a short, readable explanation.
 
-    Example output: "USB activity (+4.2σ), File activity (+3.1σ)"
+    Example output: "First-ever USB use, USB activity (+4.2σ), File activity (+3.1σ)"
+    Novelty flags, when present and switched on, are always listed first.
     """
+    parts = []
+    for col, label in NOVELTY_LABELS.items():
+        if row.get(col, 0) == 1:
+            parts.append(label)
+
     zscores = {}
     for col in FEATURE_COLS:
         value = row[f"{col}_zscore"]
@@ -53,7 +59,6 @@ def top_reasons(row: pd.Series, n: int = 3) -> str:
 
     biggest = sorted(zscores, key=lambda col: abs(zscores[col]), reverse=True)[:n]
 
-    parts = []
     for col in biggest:
         parts.append(f"{FEATURE_LABELS[col]} ({zscores[col]:+.1f}σ)")
     return ", ".join(parts)

@@ -4,10 +4,11 @@ import joblib
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 
-from src.baselines.personal_baseline import FEATURE_COLS
+from src.baselines.personal_baseline import FEATURE_COLS, NOVELTY_COLS
 from src.utils.config import RANDOM_SEED, TRAIN_FRACTION
 
 ZSCORE_COLS = [f"{c}_zscore" for c in FEATURE_COLS]
+MODEL_COLS = ZSCORE_COLS + NOVELTY_COLS
 
 
 def split_by_date(daily: pd.DataFrame, train_fraction: float = TRAIN_FRACTION):
@@ -23,26 +24,40 @@ def split_by_date(daily: pd.DataFrame, train_fraction: float = TRAIN_FRACTION):
     return train, test, cutoff
 
 
-def fit_isolation_forest(daily: pd.DataFrame, contamination: float | str = "auto") -> IsolationForest:
-    """Fit on score-ready rows only. Cold-start rows (NaN z-scores) are skipped."""
-    train_ready = daily.dropna(subset=ZSCORE_COLS)
+def fit_isolation_forest(
+    daily: pd.DataFrame,
+    columns: list[str] | None = None,
+    contamination: float | str = "auto",
+) -> IsolationForest:
+    """Fit on score-ready rows only. Cold-start rows (NaN z-scores) are skipped.
+
+    columns defaults to MODEL_COLS. Passing a smaller list is used by the
+    ablation study to see what happens when a feature group is removed.
+    """
+    columns = columns or MODEL_COLS
+    train_ready = daily.dropna(subset=columns)
     model = IsolationForest(
         n_estimators=200,
         contamination=contamination,
         random_state=RANDOM_SEED,
     )
-    model.fit(train_ready[ZSCORE_COLS])
+    model.fit(train_ready[columns])
     return model
 
 
-def score_isolation_forest(model: IsolationForest, daily: pd.DataFrame) -> pd.DataFrame:
+def score_isolation_forest(
+    model: IsolationForest,
+    daily: pd.DataFrame,
+    columns: list[str] | None = None,
+) -> pd.DataFrame:
     """Score every row that has a baseline.
 
     sklearn's decision_function is higher for normal rows, so the sign is
     flipped: in if_anomaly_score, higher always means more unusual.
     """
-    scored = daily.dropna(subset=ZSCORE_COLS).copy()
-    scored["if_anomaly_score"] = -model.decision_function(scored[ZSCORE_COLS])
+    columns = columns or MODEL_COLS
+    scored = daily.dropna(subset=columns).copy()
+    scored["if_anomaly_score"] = -model.decision_function(scored[columns])
     return scored
 
 

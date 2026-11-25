@@ -660,6 +660,8 @@ if selected_user != "All users":
         evidence["Primary trigger"] = [f"{name} ({value:.1f}σ)" for name, value in driver_info]
         evidence["Review state"] = evidence["if_anomaly_score"].ge(threshold).map({True: "Needs review", False: "Below threshold"})
         evidence_columns = ["day", "Review state", "if_anomaly_score", "Primary trigger"]
+        if "user_risk_7d" in evidence.columns:
+            evidence_columns.append("user_risk_7d")
         if "top_reasons" in evidence.columns:
             evidence_columns.append("top_reasons")
         evidence_columns += ["logon_count", "file_event_count", "usb_connect_count", "email_count"]
@@ -667,6 +669,7 @@ if selected_user != "All users":
             evidence[evidence_columns],
             column_config={
                 "top_reasons": st.column_config.TextColumn("Why it was flagged", width="large"),
+                "user_risk_7d": st.column_config.NumberColumn("7-day risk", format="%.3f"),
                 "day": st.column_config.DateColumn("Date", format="DD MMM YYYY"),
                 "if_anomaly_score": st.column_config.NumberColumn("Anomaly score", format="%.3f"),
                 "logon_count": st.column_config.NumberColumn("Logins"),

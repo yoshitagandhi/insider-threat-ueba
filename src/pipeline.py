@@ -11,6 +11,7 @@ from src.models.isolation_forest_model import (
     score_isolation_forest,
     split_by_date,
 )
+from src.models.user_risk import add_user_risk
 from src.evaluation.evaluate import attach_labels
 
 
@@ -43,6 +44,7 @@ def run_pipeline(persist_model: bool = False) -> pd.DataFrame:
     scored = score_isolation_forest(model, daily)
     scored["split"] = (scored["day"] < cutoff).map({True: "train", False: "test"})
     scored = add_top_reasons(scored)
+    scored = add_user_risk(scored)
 
     skipped = len(daily) - len(scored)
     print(f"Skipped {skipped} cold-start user-days that have no baseline yet")
@@ -56,7 +58,8 @@ def main() -> None:
     output_path = DATA_PROCESSED_DIR / "scored_daily.parquet"
     run_pipeline(persist_model=True).to_parquet(output_path, index=False)
     print(f"Wrote scored user-day data to {output_path}")
-    print("Next step: python -m src.evaluation.report")
+    print("Next steps: python -m src.evaluation.report")
+    print("            python -m src.evaluation.analysis")
 
 
 if __name__ == "__main__":

@@ -20,10 +20,20 @@ lead, not evidence of intent and never an automated personnel decision.
   example `USB activity (+4.2σ), Distinct PCs used (+3.0σ)`.
 - Evaluates with precision, recall, F1, PR-AUC, scenario breakdowns, a PR curve,
   confusion matrix, and threshold-sensitivity analysis.
-- Documents a real limitation: the sustained, low-and-slow r4.2-2 scenario is
-  substantially harder to surface than acute behavioral deviations.
+- Measures detection per *insider* as well as per day: an analyst only needs
+  one good alert to open a case.
+- Adds a 7-day user risk score (rolling average of each user's anomaly score)
+  so the analyst queue ranks people, not isolated days.
+- Includes an alert-budget analysis (insiders caught vs alerts per day) and a
+  feature-group ablation study, both with charts in `reports/`.
 
 ## Headline result
+
+> These are the **v2** results (26 Nov 2026). v3 adds three r4.2-1 features
+> (after-hours USB, after-hours file activity, first-ever USB use) and the 7-day
+> user risk score. Re-run `python -m src.pipeline`,
+> `python -m src.evaluation.report` and `python -m src.evaluation.analysis`
+> to produce the v3 numbers.
 
 Isolation Forest is fitted on the days before **29 Oct 2010** and evaluated
 on the later, unseen days (122,217 user-days, 415 of them malicious). The
@@ -52,12 +62,23 @@ Recall per CERT scenario (test period):
 | r4.2-2 | 375 | 25 | 0.067 |
 | r4.2-3 | 12 | 2 | 0.167 |
 
-r4.2-2 makes up 90% of malicious test days and remains the hardest scenario
-(see [Design decisions and limitations](#design-decisions-and-limitations)).
-The r4.2-1 and r4.2-3 figures come from very few days and should not be read
-as reliable. `python -m src.evaluation.report` also prints how many *insiders*
-received at least one alert on a malicious day, which matches how an analyst
-team works better than day-level recall does.
+Day-level recall is low, but an analyst does not need to flag every malicious
+day, only one per insider. Counted per person, the model catches **18 of 34
+insiders (53%)** in the test period:
+
+| Scenario | Insiders | Caught (≥ 1 alert on a malicious day) | Share |
+|---|---|---|---|
+| r4.2-1 | 13 | 2 | 15% |
+| r4.2-2 | 16 | 14 | **88%** |
+| r4.2-3 | 5 | 2 | 40% |
+| **All** | **34** | **18** | **53%** |
+
+This changes the reading of the results. r4.2-2 looked like the weakest
+scenario per day (6.7% recall) only because those insiders are active for
+many days; 14 of the 16 still received at least one alert. The real gap is
+**r4.2-1**: short bursts of after-hours logins and first-time USB use just
+before the insider leaves. The v3 features target exactly this. r4.2-3 has
+only 5 insiders, too few to draw conclusions from.
 
 These numbers are an improvement over the previous version (precision 0.018,
 recall 0.062, F1 0.028, PR-AUC 0.014), even though that version was scored on
@@ -76,6 +97,7 @@ CERT event CSVs
   → z-score deviation features (cold-start days left unscored)
   → time-based split: fit on earlier dates, score later dates
   → Isolation Forest anomaly score + top_reasons explanation
+  → 7-day user risk score (rolling average per user)
   → CERT answer-file labels for offline evaluation
   → Streamlit analyst dashboard
 ```
@@ -123,11 +145,22 @@ python -m venv .venv
 pip install -r requirements-dev.txt
 python -m src.pipeline
 python -m src.evaluation.report
+python -m src.evaluation.analysis
 streamlit run dashboard/app.py
 ```
 
-`src.evaluation.report` prints the test-period precision, recall, F1 and PR-AUC
-for both models, plus Isolation Forest recall for each CERT scenario.
+`src.evaluation.report` prints test-period precision, recall, F1, PR-AUC and
+insiders caught for the daily score, the 7-day user risk and the statistical
+baseline, broken down by CERT scenario.
+
+`src.evaluation.analysis` writes four files to `reports/`:
+
+- `alert_budget.csv` / `alert_budget.png`: insiders caught and precision at
+  six thresholds, shown as alerts per day so a security team can pick a
+  threshold from its review capacity.
+- `ablation.csv` / `ablation.png`: the model refitted without each feature
+  group (logon, USB/device, file, email, and the newest features), showing
+  which groups really help. It refits the model six times, so allow a minute.
 
 The pipeline reads multi-gigabyte event data and is I/O and hardware dependent;
 allow time accordingly. It writes `data/processed/scored_daily.parquet` and an
@@ -163,6 +196,9 @@ src/
   models/                      # Isolation Forest and optional autoencoder
   evaluation/                  # labels, metrics, charts, error analysis
   evaluation/report.py         # test-period evaluation report
+  evaluation/analysis.py       # alert-budget and ablation charts
+  models/user_risk.py          # 7-day user risk score
+reports/                       # charts and tables written by analysis.py
 dashboard/app.py               # cached Streamlit risk triage view
 notebooks/01_eda.ipynb         # EDA and corrected benchmark workflow
 tests/                         # unit and evaluation smoke tests
@@ -178,7 +214,9 @@ pytest
 The test suite covers feature correctness (including exclusion of logoff
 events and the distinct-PC count), leakage/cold-start behavior, zero-variance
 deviations, the standard-deviation floor, `top_reasons` wording, the time-based
-split, train-only thresholds, fixed anchor baselines, and
+split, train-only thresholds, after-hours USB/file counts, the first-ever USB
+flag, the backward-looking user risk, feature-group coverage, fixed anchor
+baselines, and
 evaluation/error-categorization smoke cases. GitHub Actions runs
 the suite on Python 3.10, 3.11, and 3.12 for pushes and pull requests.
 
@@ -202,6 +240,17 @@ the suite on Python 3.10, 3.11, and 3.12 for pushes and pull requests.
   into that day) and `first_logon_hour`. On days with no logon, the first logon
   hour is carried forward from the user's previous day rather than set to 0,
   which would look like a midnight login.
+- Three features target CERT scenario r4.2-1: `after_hours_usb_count` (USB
+  connections before 06:00 or after 20:00), `after_hours_file_count`, and
+  `first_usb_ever`. The last is a 0/1 flag for the first day a user ever
+  connects a USB drive, built from a cumulative sum of earlier days only. A
+  z-score cannot express "never done before" well (the baseline is flat), so
+  the flag goes into the model directly instead of as a z-score.
+- `user_risk_7d` is the mean daily anomaly score over the user's last 7 scored
+  days, including today and nothing later. It rewards persistence (helpful for
+  low-and-slow r4.2-2) but smooths out single-day spikes (less helpful for
+  short r4.2-1 bursts). That is why the report shows both scores side by side
+  rather than replacing one with the other.
 - Isolation Forest is fitted on the first 60% of dates and evaluated on the last
   40%. The alert threshold is the 99th percentile of *training* scores. The
   training period still contains some malicious days; that is acceptable for an
@@ -215,18 +264,23 @@ the suite on Python 3.10, 3.11, and 3.12 for pushes and pull requests.
 - Run a hyperparameter search over Isolation Forest's `n_estimators` and
   `contamination`, which are currently reasonable defaults rather than tuned
   values.
-- Explore why the anchor-baseline and HTTP-feature experiments didn't move the
-  needle on the r4.2-2 scenario specifically, since that remains the project's
-  main open analytical question.
+- If r4.2-1 is still weak after v3, add HTTP features for a short list of
+  domains (for example file-sharing and job sites). r4.2-1 insiders upload data
+  to a leak site, which only `http.csv` can see.
+- Combine the daily and 7-day scores (for example, alert if either one crosses
+  its threshold) and compare insiders caught at the same alert budget.
 
 ## Interview talking points
 
 The strongest engineering decision is the leakage guard: the baseline for day
-*t* only contains behavior observed before day *t*. The most useful analytical
-result is negative: r4.2-2's weak, sustained behavior overlaps normal user
-variance, and neither a frozen anchor baseline nor HTTP aggregates materially
-resolved that limitation. This project shows both what worked and why a tempting
-complexity increase was not adopted.
+*t* only contains behavior observed before day *t*. Every later feature (the
+carried-forward logon hour, the first-ever USB flag, the 7-day risk) follows
+the same rule of looking only backwards.
+
+The most useful analytical lesson is about choosing the right metric. Per day,
+r4.2-2 looked like the hardest scenario (6.7% recall). Per insider, 14 of 16
+were caught, and the real weakness turned out to be r4.2-1. Measuring the way
+an analyst actually works changed which problem was worth solving next.
 
 A second talking point is evaluation honesty: moving from scoring the training
 period to a forward-looking time split, and fixing two silent z-score bugs

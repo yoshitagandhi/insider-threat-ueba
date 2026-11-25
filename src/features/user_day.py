@@ -1,8 +1,18 @@
 import pandas as pd
 
 
+AFTER_HOURS_START = 20
+AFTER_HOURS_END = 6
+
+
 def _to_day(df: pd.DataFrame) -> pd.Series:
     return df["date"].dt.date
+
+
+def _is_after_hours(dates: pd.Series) -> pd.Series:
+    """True for events before 06:00 or from 20:00 onwards."""
+    hours = dates.dt.hour
+    return (hours < AFTER_HOURS_END) | (hours >= AFTER_HOURS_START)
 
 
 def logon_features(logon: pd.DataFrame) -> pd.DataFrame:
@@ -25,9 +35,7 @@ def logon_features(logon: pd.DataFrame) -> pd.DataFrame:
         distinct_pcs=("pc", "nunique"),
     ).reset_index()
 
-    after_hours = logon[
-        is_logon & ((logon["hour"] < 6) | (logon["hour"] >= 20))
-    ]
+    after_hours = logon[is_logon & _is_after_hours(logon["date"])]
 
     ah_counts = (
         after_hours.groupby(["user", "day"])
@@ -49,6 +57,11 @@ def logon_features(logon: pd.DataFrame) -> pd.DataFrame:
 
 
 def device_features(device: pd.DataFrame) -> pd.DataFrame:
+    """Daily removable-media behaviour.
+
+    after_hours_usb_count looks at the combination "USB drive plugged in at
+    night", which is a stronger data-theft signal than either part on its own.
+    """
     device = device.copy()
     device["day"] = _to_day(device)
     is_connect = device["activity"].str.lower().eq("connect")
@@ -67,13 +80,18 @@ def device_features(device: pd.DataFrame) -> pd.DataFrame:
         .rename("usb_connect_count")
     )
 
-    counts = counts.merge(
-        connects,
-        on=["user", "day"],
-        how="left"
+    night_connects = (
+        device[is_connect & _is_after_hours(device["date"])]
+        .groupby(["user", "day"])
+        .size()
+        .rename("after_hours_usb_count")
     )
 
+    counts = counts.merge(connects, on=["user", "day"], how="left")
+    counts = counts.merge(night_connects, on=["user", "day"], how="left")
+
     counts["usb_connect_count"] = counts["usb_connect_count"].fillna(0)
+    counts["after_hours_usb_count"] = counts["after_hours_usb_count"].fillna(0)
 
     return counts
 
@@ -81,12 +99,14 @@ def device_features(device: pd.DataFrame) -> pd.DataFrame:
 def file_features(file_df: pd.DataFrame) -> pd.DataFrame:
     file_df = file_df.copy()
     file_df["day"] = _to_day(file_df)
+    file_df["is_after_hours"] = _is_after_hours(file_df["date"]).astype(int)
 
     grouped = file_df.groupby(["user", "day"])
 
     return grouped.agg(
         file_event_count=("id", "count"),
         unique_filenames=("filename", "nunique"),
+        after_hours_file_count=("is_after_hours", "sum"),
     ).reset_index()
 
 

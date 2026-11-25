@@ -48,3 +48,11 @@ def test_top_reasons_lists_biggest_deviations_first():
     row["email_count_zscore"] = 1.0
 
     assert top_reasons(row, n=2) == "USB activity (+4.2σ), File activity (-3.1σ)"
+
+
+def test_top_reasons_puts_novelty_flag_first():
+    row = pd.Series({f"{c}_zscore": 0.0 for c in FEATURE_COLS})
+    row["first_usb_ever"] = 1
+    row["usb_connect_count_zscore"] = 2.0
+
+    assert top_reasons(row, n=1) == "First-ever USB use, USB activity (+2.0σ)"

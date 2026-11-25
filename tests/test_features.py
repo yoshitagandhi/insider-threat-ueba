@@ -1,5 +1,5 @@
 import pandas as pd
-from src.features.user_day import device_features, email_features, logon_features
+from src.features.user_day import device_features, email_features, file_features, logon_features
 
 
 def test_logon_features_counts_correctly():
@@ -68,3 +68,27 @@ def test_logon_features_count_distinct_pcs():
     })
     result = logon_features(logon).iloc[0]
     assert result["distinct_pcs"] == 2
+
+
+def test_after_hours_usb_and_file_counts():
+    device = pd.DataFrame({
+        "id": ["1", "2"],
+        "date": pd.to_datetime(["2010-01-01 10:00", "2010-01-01 22:30"]),
+        "user": ["A", "A"],
+        "pc": ["PC1", "PC1"],
+        "activity": ["Connect", "Connect"],
+    })
+    files = pd.DataFrame({
+        "id": ["1", "2", "3"],
+        "date": pd.to_datetime(["2010-01-01 03:00", "2010-01-01 12:00", "2010-01-01 21:00"]),
+        "user": ["A", "A", "A"],
+        "pc": ["PC1", "PC1", "PC1"],
+        "filename": ["a", "b", "c"],
+    })
+
+    usb = device_features(device).iloc[0]
+    file_day = file_features(files).iloc[0]
+
+    assert usb["usb_connect_count"] == 2
+    assert usb["after_hours_usb_count"] == 1
+    assert file_day["after_hours_file_count"] == 2
