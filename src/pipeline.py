@@ -12,6 +12,7 @@ from src.models.isolation_forest_model import (
     score_isolation_forest,
     split_by_date,
 )
+from src.models.combined import add_combined_score
 from src.models.rules import add_hybrid_score
 from src.models.user_risk import add_user_risk
 from src.evaluation.evaluate import attach_labels
@@ -56,6 +57,7 @@ def run_pipeline(persist_model: bool = False) -> pd.DataFrame:
     scored = add_hybrid_score(scored)
     scored = add_top_reasons(scored)
     scored = add_user_risk(scored)
+    scored = add_combined_score(scored)
 
     skipped = len(daily) - len(scored)
     print(f"Skipped {skipped} cold-start user-days that have no baseline yet")

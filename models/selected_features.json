@@ -1,0 +1,56 @@
+{
+  "selected": "v3 without logon group",
+  "columns": [
+    "usb_connect_count_zscore",
+    "after_hours_usb_count_zscore",
+    "device_event_count_zscore",
+    "file_event_count_zscore",
+    "unique_filenames_zscore",
+    "after_hours_file_count_zscore",
+    "email_count_zscore",
+    "total_attachments_zscore",
+    "external_recipient_ratio_zscore"
+  ],
+  "validation_results": [
+    {
+      "candidate": "v1: original 9 features",
+      "n_features": 9,
+      "val_insiders_caught": 17,
+      "val_insiders": 33,
+      "val_pr_auc": 0.035707880358164745,
+      "val_precision": 0.055984555984555984
+    },
+    {
+      "candidate": "v2: + first logon hour, distinct PCs",
+      "n_features": 11,
+      "val_insiders_caught": 15,
+      "val_insiders": 33,
+      "val_pr_auc": 0.034641875931769754,
+      "val_precision": 0.04085603112840467
+    },
+    {
+      "candidate": "v3: all 13 features",
+      "n_features": 13,
+      "val_insiders_caught": 15,
+      "val_insiders": 33,
+      "val_pr_auc": 0.0355824149518161,
+      "val_precision": 0.054878048780487805
+    },
+    {
+      "candidate": "v3 without logon group",
+      "n_features": 9,
+      "val_insiders_caught": 17,
+      "val_insiders": 33,
+      "val_pr_auc": 0.041664708785759764,
+      "val_precision": 0.05893909626719057
+    },
+    {
+      "candidate": "v3 without email group",
+      "n_features": 10,
+      "val_insiders_caught": 14,
+      "val_insiders": 33,
+      "val_pr_auc": 0.03973778401679348,
+      "val_precision": 0.05112474437627812
+    }
+  ]
+}

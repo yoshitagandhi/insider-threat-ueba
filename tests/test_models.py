@@ -42,3 +42,20 @@ def test_choose_best_falls_back_when_validation_has_no_insiders():
         "candidate": ["a"], "val_insiders_caught": [0], "val_insiders": [0], "val_pr_auc": [0.0],
     })
     assert choose_best(table) == DEFAULT_SET
+
+
+def test_combined_score_flags_either_score_and_keeps_rule_on_top():
+    from src.models.combined import add_combined_score
+
+    scored = pd.DataFrame({
+        "split": ["train"] * 4 + ["test"] * 3,
+        "if_anomaly_score": [0.1, 0.2, 0.3, 0.4, 0.5, 0.1, 0.1],
+        "user_risk_7d": [1.0, 2.0, 3.0, 4.0, 1.0, 5.0, 1.0],
+        "rule_alert": [0, 0, 0, 0, 0, 0, 1],
+    })
+
+    result = add_combined_score(scored)["combined_score"].tolist()
+
+    assert result[4] == 1.0
+    assert result[5] == 1.0
+    assert result[6] == 0.25 + RULE_BOOST

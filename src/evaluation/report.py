@@ -10,10 +10,11 @@ and then applied to the TEST period, so no test labels or test scores are used
 to choose it.
 """
 
-import numpy as np
 import pandas as pd
 
-from src.evaluation.evaluate import evaluate_scores
+from src.evaluation.diagnosis import rule_diagnosis
+from src.evaluation.evaluate import evaluate_scores, train_threshold
+from src.models.combined import add_combined_score
 from src.models.user_risk import add_user_risk
 from src.utils.config import ALERT_PERCENTILE, DATA_PROCESSED_DIR
 
@@ -21,6 +22,7 @@ SCORES = {
     "Isolation Forest (daily)": "if_anomaly_score",
     "Hybrid: IF + USB rule": "hybrid_score",
     "7-day user risk (max)": "user_risk_7d",
+    "Combined: daily OR 7-day + rule": "combined_score",
     "Max |z| baseline": "stat_anomaly_score",
 }
 
@@ -32,12 +34,9 @@ def load_scored() -> pd.DataFrame:
         raise SystemExit("This parquet has no 'split' column. Re-run: python -m src.pipeline")
     if "user_risk_7d" not in scored.columns:
         scored = add_user_risk(scored)
+    if "combined_score" not in scored.columns and "rule_alert" in scored.columns:
+        scored = add_combined_score(scored)
     return scored
-
-
-def train_threshold(scored: pd.DataFrame, score_col: str, percentile: float = ALERT_PERCENTILE) -> float:
-    train_scores = scored.loc[scored["split"] == "train", score_col]
-    return float(np.percentile(train_scores, percentile))
 
 
 def malicious_test_days(scored: pd.DataFrame, score_col: str, percentile: float) -> pd.DataFrame:
@@ -142,6 +141,11 @@ def main() -> None:
     print()
     print("Insiders with at least one alert on a malicious test day:")
     print(insiders_by_scenario(scored).to_string(index=False))
+
+    if "rule_alert" in scored.columns:
+        print()
+        print("Why the first-ever-USB rule did or did not catch each r4.2-1 insider (test period):")
+        print(rule_diagnosis(scored).to_string(index=False))
 
 
 if __name__ == "__main__":

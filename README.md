@@ -26,6 +26,8 @@ lead, not evidence of intent and never an automated personnel decision.
   period, so the test period is used exactly once.
 - Combines the model with one hand-written rule (first-ever USB use after
   hours), the way real security teams mix rules and machine learning.
+- Tests a combined alert queue that merges the daily score and the 7-day risk
+  through training percentiles, with no hand-picked weights.
 - Adds a 7-day user risk score (each user's highest daily score in the last
   week) so the analyst queue ranks people, not isolated days.
 - Includes an alert-budget analysis (insiders caught vs alerts per day) and a
@@ -33,65 +35,70 @@ lead, not evidence of intent and never an automated personnel decision.
 
 ## Headline result
 
-> These are the **v2** results (26 Nov 2026), the best *measured* version so
-> far. v3 was an experiment that made things worse; see
-> [What v3 taught us](#what-v3-taught-us). The current code (v4) fixes it with
-> validation-based feature selection and a hybrid rule. Re-run
-> `python -m src.pipeline`, `python -m src.evaluation.report` and
-> `python -m src.evaluation.analysis` to produce the v4 numbers.
+Results from the v4 pipeline (26 Nov 2026 run). The model is fitted on days
+before **29 Oct 2010** and evaluated on the later, unseen days: 122,217
+user-days, 415 of them malicious, belonging to 34 insiders. Every threshold is
+the 99th percentile of *training* scores, so no test information is used to
+set it.
 
-Isolation Forest is fitted on the days before **29 Oct 2010** and evaluated
-on the later, unseen days (122,217 user-days, 415 of them malicious). The
-alert threshold is the 99th percentile of *training* scores (0.0823).
+| Test period | Insiders caught | Precision | Recall (days) | F1 | PR-AUC | Alerts |
+|---|---|---|---|---|---|---|
+| **Hybrid: Isolation Forest + USB rule** | **21/34 (62%)** | **0.030** | 0.072 | **0.043** | 0.024 | 995 |
+| Isolation Forest (daily) | 20/34 | 0.029 | 0.070 | 0.041 | 0.023 | 997 |
+| 7-day user risk (max) | 16/34 | 0.038 | 0.094 | 0.054 | 0.035 | 1,039 |
+| Max-\|z\| baseline | 8/34 | 0.008 | 0.022 | 0.011 | 0.007 | 1,185 |
+| Random guessing | - | 0.0034 | - | - | 0.0034 | - |
 
-| Test period | Precision | Recall | F1 | PR-AUC | Alerts |
+The combined queue (daily score OR 7-day risk, plus the rule) is new in this
+commit. Run `python -m src.evaluation.report` to add its row.
+
+- About **8 alerts a day** for the whole organisation, and the hybrid model
+  catches **62% of insiders** at that budget.
+- Precision is about **9× better than random** (only 0.34% of test days are
+  malicious) and 4× better than the statistical baseline.
+- PR-AUC rose from 0.015 (v2) to 0.024 for the daily model, a 59% gain, after
+  the feature set was chosen on a validation window.
+
+Insiders caught per scenario (at least one alert on a malicious test day):
+
+| Scenario | Insiders | Isolation Forest | Hybrid | 7-day risk (max) | Baseline |
 |---|---|---|---|---|---|
-| **Isolation Forest** | **0.028** | **0.070** | **0.040** | **0.015** | 1,025 |
-| Max-\|z\| baseline | 0.007 | 0.022 | 0.011 | 0.007 | 1,213 |
-| Random guessing | 0.0034 | - | - | 0.0034 | - |
+| r4.2-1 | 13 | 4 | 4 | **11** | 2 |
+| r4.2-2 | 16 | **14** | **14** | 4 | 6 |
+| r4.2-3 | 5 | 2 | **3** | 1 | 0 |
+| **All** | **34** | 20 | **21** | 16 | 8 |
 
-- Only 0.34% of test user-days are malicious, so random alerting would reach a
-  precision of about 0.0034. Isolation Forest is **about 8× better than
-  random**, and about 3.8× (precision) and 3.2× (recall) better than the
-  statistical baseline.
-- The training threshold flagged 0.84% of test days, close to the intended 1%,
-  so behaviour did not drift much between the two periods.
-- That is about 8 alerts a day for the whole organisation, 29 of which were
-  true malicious days.
+The daily score and the 7-day risk catch almost opposite scenarios. The daily
+score catches the long-running r4.2-2 insiders; the 7-day max catches the
+short r4.2-1 bursts. That is why v4 also tests a **combined queue** that gives
+each score about half of the same alert budget. The report also prints a
+per-insider table explaining why the first-ever-USB rule did or did not fire
+for each r4.2-1 insider.
 
-Recall per CERT scenario (test period):
+### Progress across versions
 
-| Scenario | Malicious days | Caught | Recall |
-|---|---|---|---|
-| r4.2-1 | 28 | 2 | 0.071 |
-| r4.2-2 | 375 | 25 | 0.067 |
-| r4.2-3 | 12 | 2 | 0.167 |
+| Version | What changed | Insiders caught | Precision | PR-AUC |
+|---|---|---|---|---|
+| v1 | Scored on the training period itself | (not measured) | 0.018 | 0.014 |
+| v2 | Cold-start and zero-variance fixes, time split | 18/34 | 0.028 | 0.015 |
+| v3 | Three r4.2-1 features fed into the model | 12/34 | 0.015 | 0.014 |
+| **v4** | Validation-selected features + rule | **21/34** | **0.030** | **0.024** |
 
-Day-level recall is low, but an analyst does not need to flag every malicious
-day, only one per insider. Counted per person, the model catches **18 of 34
-insiders (53%)** in the test period:
+v1 was scored on the same days it was trained on and used a more generous
+PR-AUC formula, so its row is not directly comparable. Most alerts are still
+false positives, so this is an analyst-assistive detector, not an automated
+one. `n_estimators=200` and `contamination="auto"` have not been tuned.
 
-| Scenario | Insiders | Caught (≥ 1 alert on a malicious day) | Share |
-|---|---|---|---|
-| r4.2-1 | 13 | 2 | 15% |
-| r4.2-2 | 16 | 14 | **88%** |
-| r4.2-3 | 5 | 2 | 40% |
-| **All** | **34** | **18** | **53%** |
+### Charts
 
-This changes the reading of the results. r4.2-2 looked like the weakest
-scenario per day (6.7% recall) only because those insiders are active for
-many days; 14 of the 16 still received at least one alert. The real gap is
-**r4.2-1**: short bursts of after-hours logins and first-time USB use just
-before the insider leaves. r4.2-3 has only 5 insiders, too few to draw
-conclusions from.
+Generated by `python -m src.evaluation.analysis`:
 
-These numbers are an improvement over the previous version (precision 0.018,
-recall 0.062, F1 0.028, PR-AUC 0.014), even though that version was scored on
-the same days it was trained on and used a more generous PR-AUC formula. The
-absolute numbers are still low: about 97% of alerts are false positives. This
-is an early-stage, analyst-assistive detector, not a production-ready one.
-`n_estimators=200` and `contamination="auto"` are reasonable defaults and have
-not been tuned.
+![Insiders caught vs alert budget](reports/alert_budget.png)
+
+![Insiders caught when a feature group is removed](reports/ablation.png)
+
+The ablation uses the test period, so it explains results but is never used to
+choose the model.
 
 ## What v3 taught us
 
@@ -149,6 +156,7 @@ CERT event CSVs
   → Isolation Forest anomaly score + top_reasons explanation
   → hybrid score: model + first-ever-USB-after-hours rule
   → 7-day user risk score (rolling max per user)
+  → combined queue: daily score OR 7-day risk, at the same alert budget
   → CERT answer-file labels for offline evaluation
   → Streamlit analyst dashboard
 ```
@@ -229,16 +237,17 @@ pip install -r requirements-experiments.txt
 
 ## Evaluation notebook
 
-Open `notebooks/01_eda.ipynb` after generating the scored parquet file. It
-includes the class-balance view, PR comparison, threshold-sensitivity table,
-confusion matrix, scenario catch-rate visual, and the r4.2-2 score-overlap
-analysis that supports the documented limitation.
+Open `notebooks/01_eda.ipynb` after running `python -m src.pipeline`. It walks
+through the raw data, features, personal baselines, the validation-based
+feature selection, and a test-period evaluation: the report table, insiders
+caught per scenario, the r4.2-1 rule diagnosis, class balance, PR curves, the
+alert-budget chart, the confusion matrix, a user timeline and error analysis.
+All thresholds come from the training period.
 
 The 99th-percentile threshold is an operating-point example, not a universal
-production setting. The notebook exposes 95th, 97th, 99th, and 99.5th
-percentiles so reviewers can inspect the precision/recall trade-off. In a
-deployed system, select the threshold from analyst-review capacity and a
-time-based validation policy—not from contemporaneous labels.
+production setting. The alert-budget chart shows insiders caught at the 95th
+to 99.9th percentiles as alerts per day, so a security team can pick the
+threshold from its review capacity rather than from test labels.
 
 ## Project structure
 
@@ -254,6 +263,8 @@ src/
   models/user_risk.py          # 7-day user risk score
   models/feature_selection.py  # validation-based choice of model inputs
   models/rules.py              # first-ever-USB-after-hours rule + hybrid score
+  models/combined.py           # combined queue from training percentiles
+  evaluation/diagnosis.py      # why the rule did or did not catch each insider
 reports/                       # charts and tables written by analysis.py
 dashboard/app.py               # cached Streamlit risk triage view
 notebooks/01_eda.ipynb         # EDA and corrected benchmark workflow
@@ -271,7 +282,8 @@ The test suite covers feature correctness (including exclusion of logoff
 events and the distinct-PC count), leakage/cold-start behavior, zero-variance
 deviations, the standard-deviation floor, `top_reasons` wording, the time-based
 split, train-only thresholds, after-hours USB/file counts, the first-ever USB
-flag, the hybrid rule, feature-selection ranking and fallback, the
+flag, the hybrid rule, the combined queue, the rule diagnosis,
+feature-selection ranking and fallback, the
 backward-looking user risk, feature-group coverage, fixed anchor
 baselines, and
 evaluation/error-categorization smoke cases. GitHub Actions runs

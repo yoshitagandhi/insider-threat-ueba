@@ -17,8 +17,8 @@ from pathlib import Path
 import pandas as pd
 
 from src.baselines.personal_baseline import FEATURE_COLS
-from src.evaluation.evaluate import evaluate_scores
-from src.evaluation.report import insiders_caught, train_threshold
+from src.evaluation.evaluate import evaluate_scores, train_threshold
+from src.evaluation.report import insiders_caught
 from src.models.isolation_forest_model import fit_isolation_forest, score_isolation_forest, split_by_date
 from src.utils.config import ALERT_PERCENTILE
 

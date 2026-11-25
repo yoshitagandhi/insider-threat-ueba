@@ -1,7 +1,9 @@
+import numpy as np
 import pandas as pd
 from sklearn.metrics import average_precision_score, precision_score, recall_score, f1_score
 
 from src.evaluation.ground_truth import load_ground_truth
+from src.utils.config import ALERT_PERCENTILE
 
 
 def attach_labels(scored: pd.DataFrame) -> pd.DataFrame:
@@ -29,3 +31,9 @@ def evaluate_scores(merged: pd.DataFrame, score_col: str, threshold: float) -> d
         "n_flagged": int(y_pred.sum()),
         "n_malicious_days": int(y_true.sum()),
     }
+
+
+def train_threshold(scored: pd.DataFrame, score_col: str, percentile: float = ALERT_PERCENTILE) -> float:
+    """The alert threshold: a percentile of the TRAINING scores only."""
+    train_scores = scored.loc[scored["split"] == "train", score_col]
+    return float(np.percentile(train_scores, percentile))

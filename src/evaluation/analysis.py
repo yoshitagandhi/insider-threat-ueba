@@ -18,10 +18,10 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import pandas as pd
-from matplotlib.ticker import PercentFormatter, ScalarFormatter
+from matplotlib.ticker import MaxNLocator, NullFormatter, PercentFormatter
 
-from src.evaluation.evaluate import evaluate_scores
-from src.evaluation.report import SCORES, insiders_caught, load_scored, train_threshold
+from src.evaluation.evaluate import evaluate_scores, train_threshold
+from src.evaluation.report import SCORES, insiders_caught, load_scored
 from src.models.feature_selection import load_selected_columns
 from src.models.isolation_forest_model import MODEL_COLS, fit_isolation_forest, score_isolation_forest
 from src.models.user_risk import add_user_risk
@@ -41,8 +41,8 @@ FEATURE_GROUPS = {
     ],
 }
 
-COLORS = ["#257de0", "#f47230", "#00b894", "#f2a600"]
-MARKERS = ["o", "s", "^", "D"]
+COLORS = ["#257de0", "#f47230", "#00b894", "#ee7fac", "#f2a600"]
+MARKERS = ["o", "s", "^", "v", "D"]
 TEXT = "#1f1f1f"
 TEXT_SECONDARY = "#6b6b6b"
 GRID = "#e7e7e7"
@@ -127,28 +127,30 @@ def style_axes(ax) -> None:
 
 
 def plot_alert_budget(budgets: dict[str, pd.DataFrame]):
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(8, 5.5))
     for (name, table), color, marker in zip(budgets.items(), COLORS, MARKERS):
         ax.plot(
             table["alerts_per_day"], table["share_insiders_caught"],
             color=color, linewidth=2, marker=marker, markersize=7,
             markeredgecolor="white", markeredgewidth=1.5, label=name,
         )
-        last = table.iloc[0]
-        ax.annotate(
-            name, (last["alerts_per_day"], last["share_insiders_caught"]),
-            xytext=(8, 0), textcoords="offset points", va="center",
-            fontsize=9, color=TEXT,
-        )
 
     ax.set_xscale("log")
+    ax.set_xticks([0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50])
+    ax.set_xticklabels(["0.1", "0.2", "0.5", "1", "2", "5", "10", "20", "50"])
+    ax.xaxis.set_minor_formatter(NullFormatter())
+    all_x = pd.concat([table["alerts_per_day"] for table in budgets.values()])
+    all_x = all_x[all_x > 0]
+    ax.set_xlim(all_x.min() * 0.8, all_x.max() * 1.25)
     ax.set_ylim(0, 1.05)
     ax.yaxis.set_major_formatter(PercentFormatter(1.0))
-    ax.xaxis.set_major_formatter(ScalarFormatter())
     ax.set_xlabel("Alerts per day for the whole organisation (log scale)", color=TEXT_SECONDARY)
     ax.set_ylabel("Insiders with at least one alert", color=TEXT_SECONDARY)
     ax.set_title("Insiders caught vs analyst alert budget (test period)", color=TEXT, loc="left")
-    ax.legend(frameon=False, loc="lower right", labelcolor=TEXT)
+    ax.legend(
+        frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.14),
+        ncol=3, labelcolor=TEXT, fontsize=9,
+    )
     style_axes(ax)
     fig.tight_layout()
     return fig
@@ -168,9 +170,13 @@ def plot_ablation(table: pd.DataFrame):
     full_model = table.loc[table["variant"] == "Selected model", "insiders_caught_daily"].iloc[0]
     ax.axvline(full_model, color=TEXT_SECONDARY, linewidth=1, linestyle="--", zorder=0)
 
-    ax.set_xlabel("Insiders caught by the daily score (train 99th-percentile threshold)", color=TEXT_SECONDARY)
-    ax.set_title("What happens when a feature group is removed (test period, diagnostic only)", color=TEXT, loc="left", fontsize=11)
+    ax.set_xlabel(
+        "Insiders caught by the daily score (train 99th-percentile threshold, test period, diagnostic only)",
+        color=TEXT_SECONDARY, fontsize=9,
+    )
+    ax.set_title("Insiders caught when a feature group is removed", color=TEXT, loc="left")
     ax.set_xlim(0, table["insiders"].max() + 3)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     style_axes(ax)
     ax.grid(axis="y", visible=False)
     fig.tight_layout()
