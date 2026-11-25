@@ -139,31 +139,35 @@ def donut(parts, size=190, thickness=26, center_top="", center_bottom=""):
     return "".join(out)
 
 
-def heat_grid(weeks, rows=12, width=760, gap=4, labels=None):
-    n = len(weeks)
-    cell = (width - 34 - (n - 1) * gap) / n
-    cell_h = 16
+def heat_grid(weeks, rows=12, width=760, gap=4, labels=None, per_square=5):
+    """Square-cell column chart: one column per week, black = new alerts, grey = carry-over."""
+    n = max(len(weeks), 1)
+    left = 34
+    cell = (width - left - (n - 1) * gap) / n
     top = 8
-    height = top + rows * (cell_h + gap) + 26
+    height = top + rows * (cell + gap) + 24
     out = [f'<svg viewBox="0 0 {width} {height:.0f}" width="100%" class="chart">']
     for r in range(0, rows + 1, 4):
-        yy = top + (rows - r) * (cell_h + gap) - gap / 2
-        out.append(f'<text x="24" y="{yy + 4:.1f}" text-anchor="end" class="tick">{r * 5}</text>')
+        yy = top + (rows - r) * (cell + gap) - gap / 2
+        out.append(f'<text x="{left - 10}" y="{yy + 4:.1f}" text-anchor="end" class="tick">{r * per_square:g}</text>')
+    radius = min(4.0, cell / 3.5)
     for i, (dark, light) in enumerate(weeks):
-        x0 = 34 + i * (cell + gap)
+        x0 = left + i * (cell + gap)
         for r in range(rows):
-            yy = top + (rows - 1 - r) * (cell_h + gap)
+            yy = top + (rows - 1 - r) * (cell + gap)
             if r < dark:
                 fill = INK
             elif r < dark + light:
                 fill = "#bdbdbd"
             else:
                 fill = "#f1f1f1"
-            out.append(f'<rect x="{x0:.1f}" y="{yy:.1f}" width="{cell:.1f}" height="{cell_h}" rx="4" fill="{fill}"/>')
+            out.append(f'<rect x="{x0:.1f}" y="{yy:.1f}" width="{cell:.1f}" height="{cell:.1f}" rx="{radius:.1f}" fill="{fill}"/>')
     if labels:
         for k, lab in enumerate(labels):
             i = round(k * (n - 1) / max(len(labels) - 1, 1))
-            out.append(f'<text x="{34 + i * (cell + gap) + cell / 2:.1f}" y="{height - 6:.1f}" text-anchor="middle" class="tick">{lab}</text>')
+            anchor = "start" if k == 0 else ("end" if k == len(labels) - 1 else "middle")
+            xx = left + i * (cell + gap) + (0 if anchor == "start" else (cell if anchor == "end" else cell / 2))
+            out.append(f'<text x="{xx:.1f}" y="{height - 6:.1f}" text-anchor="{anchor}" class="tick">{lab}</text>')
     out.append("</svg>")
     return "".join(out)
 

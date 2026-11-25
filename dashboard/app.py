@@ -231,13 +231,14 @@ def overview() -> None:
 
     left, right = st.columns([1.45, 1])
     with left:
-        buckets, index, bucket_name = m.volume_buckets(alerts, view["day"].min(), view["day"].max())
-        biggest = max([a + b for a, b in buckets] + [1])
-        per_square = max(1, math.ceil(biggest / 12))
-        squares = [(min(12, math.ceil(a / per_square)) if a else 0, min(12, math.ceil(b / per_square)) if b else 0) for a, b in buckets]
-        grid = ch.heat_grid(squares, rows=12, width=760, labels=m.month_labels(pd.Series(index)))
-        html(f'''<div class="card" style="min-height:430px">{ui.card_header(f"{bucket_name.title()}ly alert volume",
-             f"Each column is one {bucket_name}. Every square is about {per_square} alert{'s' if per_square > 1 else ''}.",
+        buckets, index = m.volume_buckets(alerts, view["day"].min(), view["day"].max())
+        per_square = m.square_size(max([a + b for a, b in buckets] + [1]))
+        squares = [(min(12, round(a / per_square + 0.49)) if a else 0, min(12, round(b / per_square + 0.49)) if b else 0)
+                   for a, b in buckets]
+        grid = ch.heat_grid(squares, rows=12, width=760, gap=4, labels=m.month_labels(pd.Series(index)),
+                            per_square=per_square)
+        html(f'''<div class="card" style="min-height:430px">{ui.card_header("Weekly alert volume",
+             f"Each column is one week. Every square is about {per_square} alert{'s' if per_square > 1 else ''}. Showing the last {len(index)} weeks.",
              ui.inline_legend([("New alerts", INK), ("Carry-over", "#bdbdbd")]))}<div style="margin-top:14px">{grid}</div></div>''')
     with right:
         counts_by_user = alerts.groupby("user").size().rename("alert_days")

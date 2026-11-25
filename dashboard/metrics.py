@@ -1,5 +1,7 @@
 """Pandas helpers that turn the scored file into the numbers each card shows."""
 
+import math
+
 import pandas as pd
 
 from src.baselines.personal_baseline import FEATURE_COLS, FEATURE_LABELS
@@ -112,19 +114,27 @@ def risk_series(data: pd.DataFrame, period: str, threshold: float, column: str =
     return out
 
 
-def volume_buckets(alerts: pd.DataFrame, start, end) -> tuple[list[tuple[int, int]], list, str]:
-    """Alert counts per week (or month if the range is long), split into new and carry-over."""
-    weeks = max(1, (pd.Timestamp(end) - pd.Timestamp(start)).days // 7)
-    freq, name = ("W-MON", "week") if weeks <= 36 else ("MS", "month")
+def volume_buckets(alerts: pd.DataFrame, start, end, max_weeks: int = 30) -> tuple[list[tuple[int, int]], list]:
+    """Alert counts per week for the last max_weeks weeks, split into new and carry-over."""
     alerts = alerts.copy()
     alerts["carry"] = alerts["alert_source"].eq("7-day carry-over")
-    index = pd.date_range(pd.Timestamp(start).normalize(), pd.Timestamp(end), freq=freq)
+    index = pd.date_range(pd.Timestamp(start).normalize(), pd.Timestamp(end) + pd.Timedelta(days=6), freq="W-MON")
     if len(index) == 0:
-        index = pd.DatetimeIndex([pd.Timestamp(start)])
-    grouped = alerts.set_index("day").groupby(pd.Grouper(freq=freq))
+        index = pd.DatetimeIndex([pd.Timestamp(end)])
+    index = index[-max_weeks:]
+    grouped = alerts.set_index("day").groupby(pd.Grouper(freq="W-MON"))
     new = grouped["carry"].apply(lambda s: int((~s).sum())).reindex(index, fill_value=0)
     carry = grouped["carry"].apply(lambda s: int(s.sum())).reindex(index, fill_value=0)
-    return list(zip(new.tolist(), carry.tolist())), list(index), name
+    return list(zip(new.tolist(), carry.tolist())), list(index)
+
+
+def square_size(biggest: int, rows: int = 12) -> int:
+    """A round number of alerts per square, so the tallest week fits in the grid."""
+    need = max(1, math.ceil(biggest / rows))
+    for size in [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000]:
+        if size >= need:
+            return size
+    return need
 
 
 def carry_bands(user_days: pd.DataFrame) -> list[tuple[int, int]]:
