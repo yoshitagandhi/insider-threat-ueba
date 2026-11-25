@@ -189,8 +189,8 @@ CERT event CSVs
   → 7-day user risk score (rolling max per user)
   → combined queue: daily score OR 7-day risk, at the same alert budget
   → CERT answer-file labels for offline evaluation
-  → Streamlit analyst dashboard, ranked by the combined risk score, with the
-    alert source (rule, today's behaviour, or 7-day carry-over) for each day
+  → Streamlit analyst dashboard with three pages (Overview, Investigate,
+    Model performance), ranked by the combined risk score
 ```
 
 `is_malicious` is never used to fit a model. It is used for test-period
@@ -267,6 +267,29 @@ For the optional PyTorch experiment:
 pip install -r requirements-experiments.txt
 ```
 
+## Dashboard
+
+`streamlit run dashboard/app.py` opens a black-and-white analyst dashboard.
+A floating top bar holds the three pages and the **Dates**, **Review** and
+**User** filters. Every card has a one-line explanation in plain language.
+
+- **Overview**: people monitored, people needing review now, alerts per day,
+  alerts over time, why people were flagged (today's behaviour, 7-day
+  carry-over or USB rule), weekly alert volume, top people, recent alerts and
+  a case queue.
+- **Investigate**: one person compared with their own normal: a risk gauge,
+  risk timeline with carry-over days shaded, a radar of usual day vs worst day,
+  risk per month, the biggest changes, plain-language reasons and next steps,
+  what triggered their alerts, and the evidence table in a dropdown.
+- **Model performance**: the offline evaluation on the test period: insiders
+  caught, early warning vs chance (gauge and one dot per insider), insiders
+  caught vs daily workload, progress across versions, results by scenario and
+  the feature-group ablation. It uses CERT labels, so it is for evaluation,
+  not daily use.
+
+Charts are drawn as SVG by `dashboard/svg_charts.py`, so they need no extra
+charting library.
+
 ## Evaluation notebook
 
 Open `notebooks/01_eda.ipynb` after running `python -m src.pipeline`. It walks
@@ -298,7 +321,10 @@ src/
   models/combined.py           # combined queue from training percentiles
   evaluation/diagnosis.py      # why the rule did or did not catch each insider
 reports/                       # charts and tables written by analysis.py
-dashboard/app.py               # Streamlit triage view, ranked by combined risk
+dashboard/app.py               # Streamlit dashboard: top bar, three pages
+dashboard/metrics.py           # turns the scored file into card numbers
+dashboard/svg_charts.py        # black-and-white SVG charts (radar, gauge, ...)
+dashboard/ui.py                # stylesheet and small HTML helpers
 notebooks/01_eda.ipynb         # EDA and corrected benchmark workflow
 tests/                         # unit and evaluation smoke tests
 .github/workflows/tests.yml    # Python 3.10–3.12 CI
@@ -317,7 +343,8 @@ split, train-only thresholds, after-hours USB/file counts, the first-ever USB
 flag, the hybrid rule, the combined queue, the alert source, the rule
 diagnosis, the early-warning count,
 feature-selection ranking and fallback, the
-backward-looking user risk, feature-group coverage, fixed anchor
+backward-looking user risk, feature-group coverage, the dashboard's card
+calculations, fixed anchor
 baselines, and
 evaluation/error-categorization smoke cases. GitHub Actions runs
 the suite on Python 3.10, 3.11, and 3.12 for pushes and pull requests.

@@ -80,6 +80,33 @@ def insiders_caught(
     return summarise_insiders(per_user)
 
 
+def insider_outcomes(
+    scored: pd.DataFrame,
+    score_col: str = "if_anomaly_score",
+    percentile: float = ALERT_PERCENTILE,
+    lookback_days: int = EARLY_WARNING_DAYS,
+) -> pd.DataFrame:
+    """One row per insider in the test period: caught during the attack, and caught early.
+
+    "caught_early" is True if an alert came during the attack OR in the
+    lookback_days before the first attack day.
+    """
+    threshold = train_threshold(scored, score_col, percentile)
+    attack_days = scored[(scored["split"] == "test") & (scored["is_malicious"] == 1)]
+
+    rows = []
+    for (scenario, user), bad in attack_days.groupby(["scenario_group", "user"]):
+        first_attack = pd.to_datetime(bad["day"]).min()
+        history = scored[scored["user"] == user]
+        days_before_attack = (first_attack - pd.to_datetime(history["day"])).dt.days
+        before = history[(days_before_attack >= 1) & (days_before_attack <= lookback_days)]
+        during = bool((bad[score_col] >= threshold).any())
+        early = during or bool((before[score_col] >= threshold).any())
+        rows.append({"scenario_group": scenario, "user": user, "caught_during": during, "caught_early": early})
+
+    return pd.DataFrame(rows)
+
+
 def insiders_caught_early(
     scored: pd.DataFrame,
     score_col: str = "if_anomaly_score",
@@ -93,19 +120,9 @@ def insiders_caught_early(
     analyst, but the day-level labels count it as a false positive. Every score
     is measured the same way, so the comparison stays fair.
     """
-    threshold = train_threshold(scored, score_col, percentile)
-    attack_days = scored[(scored["split"] == "test") & (scored["is_malicious"] == 1)]
-
-    rows = []
-    for (scenario, user), bad in attack_days.groupby(["scenario_group", "user"]):
-        first_attack = pd.to_datetime(bad["day"]).min()
-        history = scored[scored["user"] == user]
-        days_before_attack = (first_attack - pd.to_datetime(history["day"])).dt.days
-        before = history[(days_before_attack >= 1) & (days_before_attack <= lookback_days)]
-        caught = (bad[score_col] >= threshold).any() or (before[score_col] >= threshold).any()
-        rows.append({"scenario_group": scenario, "user": user, "caught": bool(caught)})
-
-    return summarise_insiders(pd.DataFrame(rows))
+    outcomes = insider_outcomes(scored, score_col, percentile, lookback_days)
+    per_user = outcomes.rename(columns={"caught_early": "caught"})[["scenario_group", "user", "caught"]]
+    return summarise_insiders(per_user)
 
 
 def benign_window_alert_rate(
