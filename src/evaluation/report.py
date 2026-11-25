@@ -100,11 +100,8 @@ def insiders_caught_early(
     for (scenario, user), bad in attack_days.groupby(["scenario_group", "user"]):
         first_attack = pd.to_datetime(bad["day"]).min()
         history = scored[scored["user"] == user]
-        history_days = pd.to_datetime(history["day"])
-        before = history[
-            (history_days >= first_attack - pd.Timedelta(days=lookback_days))
-            & (history_days < first_attack)
-        ]
+        days_before_attack = (first_attack - pd.to_datetime(history["day"])).dt.days
+        before = history[(days_before_attack >= 1) & (days_before_attack <= lookback_days)]
         caught = (bad[score_col] >= threshold).any() or (before[score_col] >= threshold).any()
         rows.append({"scenario_group": scenario, "user": user, "caught": bool(caught)})
 

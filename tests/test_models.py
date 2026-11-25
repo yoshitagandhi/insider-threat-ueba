@@ -59,3 +59,20 @@ def test_combined_score_flags_either_score_and_keeps_rule_on_top():
     assert result[4] == 1.0
     assert result[5] == 1.0
     assert result[6] == 0.25 + RULE_BOOST
+
+
+def test_alert_source_separates_rule_today_and_carry_over():
+    from src.models.combined import add_alert_source
+
+    scored = pd.DataFrame({
+        "split": ["train"] * 4 + ["test"] * 3,
+        "if_anomaly_score": [0.1, 0.2, 0.3, 0.4, 0.5, 0.1, 0.1],
+        "user_risk_7d": [0.1, 0.2, 0.3, 0.4, 0.5, 0.5, 0.5],
+        "rule_alert": [0, 0, 0, 0, 0, 0, 1],
+    })
+
+    sources = add_alert_source(scored)["alert_source"].tolist()
+
+    assert sources[4] == "today's behaviour"
+    assert sources[5] == "7-day carry-over"
+    assert sources[6] == "rule"

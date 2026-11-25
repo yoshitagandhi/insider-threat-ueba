@@ -22,7 +22,7 @@ import pandas as pd
 import streamlit as st
 
 from src.baselines.personal_baseline import FEATURE_LABELS
-from src.models.combined import add_combined_score, add_risk_score
+from src.models.combined import add_alert_source, add_combined_score, add_risk_score
 from src.utils.config import ALERT_PERCENTILE, DATA_PROCESSED_DIR
 
 
@@ -341,6 +341,8 @@ def load_scored_data(path: str) -> pd.DataFrame:
     data = pd.read_parquet(path).copy()
     if "split" in data.columns and "combined_score" not in data.columns and "rule_alert" in data.columns:
         data = add_combined_score(data)
+    if "combined_score" in data.columns and "alert_source" not in data.columns:
+        data = add_alert_source(data)
     data = add_risk_score(data)
     data["day"] = pd.to_datetime(data["day"])
     return data
@@ -666,7 +668,10 @@ if selected_user != "All users":
         if "rule_alert" in evidence.columns:
             needs_review = needs_review | evidence["rule_alert"].eq(1)
         evidence["Review state"] = needs_review.map({True: "Needs review", False: "Below threshold"})
-        evidence_columns = ["day", "Review state", "risk_score", "Primary trigger"]
+        evidence_columns = ["day", "Review state"]
+        if "alert_source" in evidence.columns:
+            evidence_columns.append("alert_source")
+        evidence_columns += ["risk_score", "Primary trigger"]
         if "user_risk_7d" in evidence.columns:
             evidence_columns.append("user_risk_7d")
         if "top_reasons" in evidence.columns:
@@ -676,6 +681,7 @@ if selected_user != "All users":
             evidence[evidence_columns],
             column_config={
                 "top_reasons": st.column_config.TextColumn("Why it was flagged", width="large"),
+                "alert_source": st.column_config.TextColumn("Alert source"),
                 "user_risk_7d": st.column_config.NumberColumn("7-day risk", format="%.3f"),
                 "day": st.column_config.DateColumn("Date", format="DD MMM YYYY"),
                 "risk_score": st.column_config.NumberColumn("Risk score", format="%.3f"),

@@ -29,6 +29,28 @@ def add_combined_score(scored: pd.DataFrame) -> pd.DataFrame:
     daily_rank = train_percentile(scored, "if_anomaly_score")
     risk_rank = train_percentile(scored, "user_risk_7d")
     scored["combined_score"] = np.maximum(daily_rank, risk_rank) + RULE_BOOST * scored["rule_alert"]
+    return add_alert_source(scored)
+
+
+def add_alert_source(scored: pd.DataFrame) -> pd.DataFrame:
+    """Say which part of the combined score drives each day.
+
+    - "rule": the first-ever-USB-after-hours rule fired today
+    - "7-day carry-over": the 7-day risk is higher than today's own score
+      would justify, because a stronger spike happened earlier in the week
+    - "today's behaviour": the day's own anomaly score is the driver
+
+    Without this, an analyst sees a high risk score on a quiet day and
+    cannot tell why.
+    """
+    scored = scored.copy()
+    daily_rank = train_percentile(scored, "if_anomaly_score")
+    risk_rank = train_percentile(scored, "user_risk_7d")
+    carried = (risk_rank > daily_rank) & (scored["user_risk_7d"] > scored["if_anomaly_score"])
+
+    scored["alert_source"] = "today's behaviour"
+    scored.loc[carried, "alert_source"] = "7-day carry-over"
+    scored.loc[scored["rule_alert"] == 1, "alert_source"] = "rule"
     return scored
 
 

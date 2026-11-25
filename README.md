@@ -28,6 +28,8 @@ lead, not evidence of intent and never an automated personnel decision.
   hours), the way real security teams mix rules and machine learning.
 - Tests a combined alert queue that merges the daily score and the 7-day risk
   through training percentiles, with no hand-picked weights.
+- Measures early warning: insiders alerted in the week *before* their attack,
+  checked against a chance level, because day-level labels miss those alerts.
 - Adds a 7-day user risk score (each user's highest daily score in the last
   week) so the analyst queue ranks people, not isolated days.
 - Includes an alert-budget analysis (insiders caught vs alerts per day) and a
@@ -72,15 +74,36 @@ short r4.2-1 bursts. The combined queue gives each about half of the same
 alert budget. It turns each score into a training percentile and takes the
 higher one, so no weights are picked by hand.
 
-**The rule is an early warning.** The rule diagnosis shows that the
-first-ever-USB-after-hours rule fired for **all 13 r4.2-1 insiders**, on
-their first USB day, 1 to 3 days *before* the first day CERT labels as
-malicious. It fired on only 36 user-days in 17 months. Day-level labels count
-those warnings as false positives, so the report also counts insiders alerted
-*during the attack or in the 7 days before it*, measured the same way for
-every score, with a chance check (how often a random 8-day window of a benign
-user contains an alert). Run `python -m src.evaluation.report` to see those
-numbers.
+### Early warning: alerts in the week before the attack
+
+CERT labels only the attack days themselves. An alert a few days *earlier* is
+just as useful to an analyst, but day-level labels count it as a false
+positive. The report therefore also counts an insider as caught if an alert
+came during the attack **or in the 7 days before it**. Every score is measured
+the same way, with a chance check: the share of random 8-day windows of normal
+(never-malicious) users that contain an alert.
+
+| Test period | During attack | **During or ≤ 7 days before** | Chance level |
+|---|---|---|---|
+| **Hybrid: Isolation Forest + USB rule** | 21/34 | **30/34 (88%)** | 3.1% |
+| Isolation Forest (daily) | 20/34 | 29/34 | 3.1% |
+| Combined queue | **24/34** | 26/34 | 2.0% |
+| 7-day user risk (max) | 16/34 | 17/34 | 1.1% |
+| Max-\|z\| baseline | 8/34 | 14/34 | 5.3% |
+
+- **88% of insiders get an alert during the attack or in the week before it**,
+  compared with a 3% chance for a random normal user's week. By chance alone
+  you would expect about one of the 34 insiders to be credited.
+- **r4.2-1 rises to 13/13** under this view. The rule diagnosis shows why: for
+  all 13 r4.2-1 insiders, the first-ever-USB-after-hours rule fired on their
+  first USB day, **1 to 13 days before** CERT's first labelled attack day, and
+  the daily model also flagged that day. The rule fired on only 36 user-days
+  in 17 months.
+- **The best model depends on the question.** To catch people *during* the
+  attack, the combined queue is best (24/34). To catch them *before or during*
+  it, the hybrid is best (30/34). The combined queue gives half its budget to
+  the 7-day risk, which carries spikes forward and so adds little early
+  warning.
 
 ### Progress across versions
 
@@ -166,7 +189,8 @@ CERT event CSVs
   → 7-day user risk score (rolling max per user)
   → combined queue: daily score OR 7-day risk, at the same alert budget
   → CERT answer-file labels for offline evaluation
-  → Streamlit analyst dashboard, ranked by the combined risk score
+  → Streamlit analyst dashboard, ranked by the combined risk score, with the
+    alert source (rule, today's behaviour, or 7-day carry-over) for each day
 ```
 
 `is_malicious` is never used to fit a model. It is used for test-period
@@ -290,7 +314,8 @@ The test suite covers feature correctness (including exclusion of logoff
 events and the distinct-PC count), leakage/cold-start behavior, zero-variance
 deviations, the standard-deviation floor, `top_reasons` wording, the time-based
 split, train-only thresholds, after-hours USB/file counts, the first-ever USB
-flag, the hybrid rule, the combined queue, the rule diagnosis,
+flag, the hybrid rule, the combined queue, the alert source, the rule
+diagnosis, the early-warning count,
 feature-selection ranking and fallback, the
 backward-looking user risk, feature-group coverage, fixed anchor
 baselines, and
@@ -333,6 +358,12 @@ the suite on Python 3.10, 3.11, and 3.12 for pushes and pull requests.
   40%. The alert threshold is the 99th percentile of *training* scores. The
   training period still contains some malicious days; that is acceptable for an
   unsupervised model because labels are never used for fitting.
+- The early-warning window is a fixed 7 days, chosen before looking at the
+  results and not tuned. Its chance check uses normal users only, so the
+  comparison is not flattered by other insiders' alerts.
+- In the dashboard, a high risk score on a quiet day usually comes from the
+  7-day risk carrying an earlier spike forward. The "Alert source" column
+  says so explicitly.
 - Feature-level behavioral anomaly scores do not establish malicious intent.
 
 ## Possible next steps
@@ -355,7 +386,10 @@ the same rule of looking only backwards.
 The most useful analytical lesson is about choosing the right metric. Per day,
 r4.2-2 looked like the hardest scenario (6.7% recall). Per insider, 14 of 16
 were caught, and the real weakness turned out to be r4.2-1. Measuring the way
-an analyst actually works changed which problem was worth solving next.
+an analyst actually works changed which problem was worth solving next. The
+same idea led to the early-warning count: the first-ever-USB rule looked
+useless on attack-day labels, but it fired days before the attack for every
+r4.2-1 insider.
 
 The third lesson is about honest model selection. The v3 features improved
 their target scenario but hurt overall, and the best-looking fix came from the
