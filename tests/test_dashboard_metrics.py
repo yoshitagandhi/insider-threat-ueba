@@ -55,3 +55,19 @@ def test_nice_ticks_round_the_axis():
     assert low == 0.0
     assert high == 1.0
     assert ticks == [0.0, 0.25, 0.5, 0.75, 1.0]
+
+
+def test_svgs_are_turned_into_images_for_st_html():
+    import base64
+
+    from dashboard.svg_charts import gauge, svgs_to_images
+
+    html = f'<div class="card">{gauge(0.5, 1.0, "0.500", "")}</div>'
+    converted = svgs_to_images(html)
+
+    assert "<svg" not in converted
+    assert 'src="data:image/svg+xml;base64,' in converted
+    encoded = converted.split("base64,")[1].split('"')[0]
+    svg = base64.b64decode(encoded).decode("utf-8")
+    assert 'xmlns="http://www.w3.org/2000/svg"' in svg
+    assert "<style>" in svg

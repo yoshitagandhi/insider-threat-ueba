@@ -1,4 +1,6 @@
+import base64
 import math
+import re
 
 INK = "#111111"
 INK2 = "#3a3a3a"
@@ -98,7 +100,8 @@ def area_chart(values, labels, threshold, width=820, height=260, ymin=0.0, ymax=
             out.append(f'<circle cx="{x(i):.1f}" cy="{y(v):.1f}" r="4.2" fill="{INK}" stroke="#fff" stroke-width="2">{tip}</circle>')
     for k, lab in enumerate(labels):
         i = min(n - 1, round(k * (n - 1) / max(len(labels) - 1, 1)))
-        out.append(f'<text x="{x(i):.1f}" y="{height - 8}" text-anchor="middle" class="tick">{lab}</text>')
+        anchor = "start" if k == 0 else ("end" if k == len(labels) - 1 else "middle")
+        out.append(f'<text x="{x(i):.1f}" y="{height - 8}" text-anchor="{anchor}" class="tick">{lab}</text>')
     if tooltip is not None:
         i, text1, text2 = tooltip
         px, py = x(i), y(values[i])
@@ -381,7 +384,7 @@ def gauge(value, vmax, big, small, marker=None, width=320, dark=False):
         mx2, my2 = c + (r + 22) * math.cos(a), cy - (r + 22) * math.sin(a)
         out.append(f'<line x1="{mx1:.1f}" y1="{my1:.1f}" x2="{mx2:.1f}" y2="{my2:.1f}" stroke="{"#fff" if dark else "#111"}" stroke-width="2.5" stroke-linecap="round"/>')
     color = "#fff" if dark else "#111"
-    out.append(f'<text x="{c}" y="{cy - 6:.1f}" text-anchor="middle" style="font-size:46px;font-weight:680;letter-spacing:-0.04em;fill:{color};font-family:Inter">{big}</text>')
+    out.append(f'<text x="{c}" y="{cy - 6:.1f}" text-anchor="middle" style="font-size:46px;font-weight:680;letter-spacing:-0.04em;fill:{color}">{big}</text>')
     out.append("</svg>")
     return "".join(out)
 
@@ -426,7 +429,7 @@ def rose(items, size=400, hole=26):
     rmax = size / 2 - 96
     total = sum(v for _, v, _ in items)
     vmax = max(v for _, v, _ in items)
-    out = [f'<svg viewBox="0 0 {size} {size}" width="100%" class="chart" style="overflow:visible">']
+    out = [f'<svg viewBox="-80 0 {size + 160} {size}" width="100%" class="chart">']
     out.append(f'<circle cx="{c}" cy="{c}" r="{rmax + 14}" fill="none" stroke="#dcdcdc" stroke-dasharray="2 5"/>')
     start = -math.pi / 2
     for label, v, color in items:
@@ -445,8 +448,8 @@ def rose(items, size=400, hole=26):
         anchor = "start" if math.cos(mid) > 0.1 else ("end" if math.cos(mid) < -0.1 else "middle")
         out.append(f'<line x1="{lx1:.1f}" y1="{ly1:.1f}" x2="{lx2:.1f}" y2="{ly2:.1f}" stroke="#bbb" stroke-dasharray="2 3"/>')
         dx = 4 if anchor == "start" else (-4 if anchor == "end" else 0)
-        out.append(f'<text x="{lx2 + dx:.1f}" y="{ly2 - 2:.1f}" text-anchor="{anchor}" style="font-size:17px;font-weight:700;fill:#111;font-family:Inter">{v}</text>')
-        out.append(f'<text x="{lx2 + dx:.1f}" y="{ly2 + 13:.1f}" text-anchor="{anchor}" class="tick">{label}</text>')
+        out.append(f'<text x="{lx2 + dx:.1f}" y="{ly2 - 3:.1f}" text-anchor="{anchor}" style="font-size:20px;font-weight:700;fill:#111">{v}</text>')
+        out.append(f'<text x="{lx2 + dx:.1f}" y="{ly2 + 15:.1f}" text-anchor="{anchor}" style="font-size:14px;fill:#8a8a8a">{label}</text>')
         start = a1
     out.append(f'<circle cx="{c}" cy="{c}" r="{hole - 4}" fill="#111"/>')
     out.append("</svg>")
@@ -522,3 +525,41 @@ def nice_ticks(low, high, count=5):
         ticks.append(round(t, 6))
         t += step
     return ticks[0], ticks[-1], ticks
+
+
+SVG_STYLE = """<style>
+text { font-family: Inter, 'Segoe UI', Arial, sans-serif; }
+.tick { font-size: 11px; fill: #9a9a9a; }
+.tick.strong { fill: #444; font-weight: 600; }
+.lbl { font-size: 12.5px; fill: #333; }
+.lbl.strong { font-weight: 650; fill: #111; }
+.tt1 { font-size: 11px; fill: #bbb; }
+.tt2 { font-size: 13px; fill: #fff; font-weight: 650; }
+.donut-big { font-size: 26px; font-weight: 680; fill: #111; letter-spacing: -0.03em; }
+</style>"""
+
+SVG_BLOCK = re.compile(r"<svg\b([^>]*)>(.*?)</svg>", re.DOTALL)
+
+
+def _svg_to_img(match: re.Match) -> str:
+    attrs, body = match.group(1), match.group(2)
+    box = re.search(r'viewBox="([-\d.]+) ([-\d.]+) ([\d.]+) ([\d.]+)"', attrs)
+    width, height = (float(box.group(3)), float(box.group(4))) if box else (300.0, 150.0)
+    stretch = 'width="100%"' in attrs
+    attrs = re.sub(r'\s(width|height|class|style|preserveAspectRatio)="[^"]*"', "", attrs)
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg"{attrs} width="{width:g}" height="{height:g}">'
+           f"{SVG_STYLE}{body}</svg>")
+    data = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    if stretch:
+        return f'<img class="svgimg" alt="" src="data:image/svg+xml;base64,{data}" style="width:100%;height:auto;display:block">'
+    return f'<img alt="" src="data:image/svg+xml;base64,{data}" width="{width:g}" height="{height:g}" style="display:block">'
+
+
+def svgs_to_images(html: str) -> str:
+    """Streamlit's st.html removes inline <svg>, so every chart and icon is turned into an image.
+
+    Each SVG becomes a base64 "data:image/svg+xml" <img>, which st.html keeps.
+    The text styles are copied inside each SVG because page CSS cannot reach
+    into an image.
+    """
+    return SVG_BLOCK.sub(_svg_to_img, html)

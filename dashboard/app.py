@@ -86,7 +86,7 @@ def performance_data(path: str, modified: float) -> dict:
 
 
 def html(content: str) -> None:
-    st.html(content)
+    st.html(ch.svgs_to_images(content))
 
 
 def fmt_day(day) -> str:
@@ -105,8 +105,11 @@ train_scores = scored.loc[scored["split"] == "train", "risk_score"] if "split" i
 
 for key, default in [("page_choice", "Overview"), ("date_scope", "All dates"), ("review_state", "All signals"), ("user_choice", "All users")]:
     st.session_state.setdefault(key, default)
-if st.session_state.get("page") is None:
-    st.session_state["page"] = st.session_state["page_choice"]
+
+
+def go_to(name: str) -> None:
+    st.session_state["page_choice"] = name
+
 
 scope = st.session_state["date_scope"] or "All dates"
 custom = st.session_state.get("custom_dates")
@@ -124,9 +127,10 @@ needs_now = int((m.latest_by_user(dated)["risk_score"] >= threshold).sum())
 with st.container(key="topbar"):
     nav, dates_col, review_col, user_col, bell_col = st.columns([3.1, 2.2, 1.35, 1.35, 0.35], vertical_alignment="center")
     with nav:
-        picked = st.segmented_control("Page", PAGES, key="page", label_visibility="collapsed")
-        if picked:
-            st.session_state["page_choice"] = picked
+        with st.container(horizontal=True, key="nav", gap="small"):
+            for name, symbol in zip(PAGES, [":material/grid_view:", ":material/search:", ":material/bar_chart:"]):
+                st.button(name, icon=symbol, key=f"nav_{name}", on_click=go_to, args=(name,),
+                          type="primary" if st.session_state["page_choice"] == name else "tertiary")
     with dates_col:
         with st.popover(f"Dates · {date_label}", icon=":material/calendar_month:", width="stretch"):
             st.radio("Date range", DATE_SCOPES, key="date_scope", horizontal=True)
@@ -143,7 +147,7 @@ with st.container(key="topbar"):
             st.selectbox("Person", user_options, key="user_choice")
             st.caption("People are sorted by their highest risk in the chosen dates.")
     with bell_col:
-        html(f'<div class="bellwrap"><div class="round" title="People above the line on their latest day">{ui.icon("bell")}<span class="dot">{needs_now}</span></div></div>')
+        html(f'<div class="bellwrap"><div class="round" title="People above the line on their latest day">{ui.icon("bell", 18, "#ffffff")}<span class="dot">{needs_now}</span></div></div>')
 
 page = st.session_state["page_choice"]
 user = st.session_state["user_choice"]
@@ -190,8 +194,8 @@ def overview() -> None:
     with left:
         with st.container(key="card_trend"):
             html(ui.card_header("Alerts over time", "How many people crossed the alert line in each period. The dashed line is the average; dots mark busy periods."))
-            period = st.segmented_control("Period", ["Daily", "Weekly", "Monthly"], default="Daily", key="trend_period",
-                                          label_visibility="collapsed") or "Daily"
+            period = st.segmented_control("Period", ["Daily", "Weekly", "Monthly"], default="Weekly", key="trend_period",
+                                          label_visibility="collapsed") or "Weekly"
             series = m.risk_series(view, period, threshold)
             if len(series) < 2:
                 html('<div class="empty">Not enough days in this range to draw a trend.</div>')
@@ -374,7 +378,7 @@ def investigate() -> None:
     left, right = st.columns(2)
     with left:
         lines = "".join(f'<div class="w"><div class="n">{i + 1}</div><div>{t}</div></div>' for i, t in enumerate(m.why_lines(peak, carry_after)))
-        todo = "".join(f'<div>{ui.icon("check", 15)} {t}</div>' for t in [
+        todo = "".join(f'<div>{ui.icon("check", 15, "#111111")} {t}</div>' for t in [
             f"Check what was copied or sent on {peak['day']:%d %b}",
             "Confirm whether any after-hours work was approved",
             "Close or escalate the case and note the outcome"])
@@ -384,7 +388,7 @@ def investigate() -> None:
     with right:
         counts = m.trigger_counts(alert_days)
         shades = [INK, "#4a4a4a", "#8a8a8a", "#bdbdbd", "#dcdcdc"]
-        body = (f'<div style="max-width:430px;margin:-6px auto -10px">{ch.rose([(n, c, shades[i]) for i, (n, c) in enumerate(counts)], size=420)}</div>'
+        body = (f'<div style="max-width:600px;margin:0 auto">{ch.rose([(n, c, shades[i]) for i, (n, c) in enumerate(counts)], size=420)}</div>'
                 if counts else '<div class="empty">No alert days for this person in the chosen dates.</div>')
         html(f'''<div class="card" style="min-height:520px">{ui.card_header("What triggered the alerts",
              f"The main reason on each of this person's {len(alert_days)} alert days. Bigger slice = more days.",

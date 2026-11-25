@@ -26,15 +26,16 @@ ICONS = {
 }
 
 
-def icon(name: str, size: int = 18, stroke: float = 1.8) -> str:
-    return (f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+def icon(name: str, size: int = 18, color: str = "#111111", stroke: float = 1.8) -> str:
+    """A small line icon. It is drawn as SVG and later turned into an image (see svg_charts)."""
+    return (f'<svg viewBox="0 0 24 24" width="{size}" height="{size}" fill="none" stroke="{color}" '
             f'stroke-width="{stroke}" stroke-linecap="round" stroke-linejoin="round">{ICONS[name]}</svg>')
 
 
 def kpi_card(ic: str, value: str, label: str, explanation: str, extra: str = "", dark: bool = False) -> str:
     return f"""
 <div class="card kpi {'dark' if dark else ''}">
-  <div class="card-top"><div class="ic">{icon(ic)}</div>{extra}</div>
+  <div class="card-top"><div class="ic">{icon(ic, color="#ffffff" if dark else "#111111")}</div>{extra}</div>
   <div><div class="val">{value}</div><div class="lab">{label}</div><div class="exp">{explanation}</div></div>
 </div>"""
 
@@ -48,7 +49,7 @@ def chip(text: str, kind: str = "") -> str:
 
 
 def note(text: str) -> str:
-    return f'<div class="note">{icon("info", 16)}<div>{text}</div></div>'
+    return f'<div class="note">{icon("info", 16, "#8a8a8a")}<div>{text}</div></div>'
 
 
 def inline_legend(items: list[tuple[str, str]]) -> str:
@@ -75,12 +76,12 @@ CSS = """
 .st-key-topbar { background: rgba(255,255,255,.85); border-radius: 999px; padding: 8px 10px;
   box-shadow: 0 10px 30px rgba(0,0,0,.06); border: 1px solid rgba(0,0,0,.04); }
 .st-key-topbar [data-testid="stHorizontalBlock"] { align-items: center; gap: .5rem; }
-.st-key-page [data-testid="stButtonGroup"] { gap: 4px; }
-.st-key-page button { border: none !important; background: transparent !important; border-radius: 999px !important;
-  padding: 9px 18px !important; color: #555 !important; font-weight: 550; min-height: 0; }
-.st-key-page button[data-testid="stBaseButton-segmented_controlActive"],
-.st-key-page button[kind="segmented_controlActive"] { background: #111 !important; color: #fff !important;
-  box-shadow: 0 6px 16px rgba(0,0,0,.18); }
+.st-key-nav button { border-radius: 999px !important; padding: 9px 18px !important; min-height: 0 !important;
+  font-weight: 550 !important; border: none !important; box-shadow: none; }
+.st-key-nav button[kind="tertiary"] { background: transparent !important; color: #555 !important; }
+.st-key-nav button[kind="tertiary"]:hover { background: #f2f2f2 !important; color: #111 !important; }
+.st-key-nav button[kind="primary"] { background: #111 !important; color: #fff !important; box-shadow: 0 6px 16px rgba(0,0,0,.18) !important; }
+.st-key-nav button[kind="primary"] * { color: #fff !important; }
 .st-key-topbar [data-testid="stPopover"] button { border-radius: 999px; background: #f4f4f4; border: 1px solid #e8e8e8;
   font-size: 13px; font-weight: 600; color: #222; min-height: 40px; }
 .st-key-topbar [data-testid="stPopover"] button:hover { border-color: #111; color: #111; }
@@ -88,7 +89,12 @@ CSS = """
 div[class*="st-key-card"] { background: #fff; border-radius: 28px; padding: 22px 24px;
   box-shadow: 0 14px 34px rgba(0,0,0,.06), 0 2px 6px rgba(0,0,0,.03); border: 1px solid rgba(0,0,0,.035); }
 div[class*="st-key-card"] [data-testid="stVerticalBlock"] { gap: .55rem; }
-div[class*="st-key-card"] [data-testid="stButtonGroup"] button { border-radius: 999px; font-size: 12.5px; padding: 4px 12px; min-height: 0; }
+div[class*="st-key-card"] [data-testid="stButtonGroup"] { background: #f2f2f2; padding: 4px; border-radius: 999px; gap: 2px; width: fit-content; }
+div[class*="st-key-card"] [data-testid="stButtonGroup"] button { border-radius: 999px !important; font-size: 12.5px; padding: 5px 14px !important;
+  min-height: 0 !important; border: none !important; background: transparent !important; color: #666 !important; margin: 0 !important; }
+div[class*="st-key-card"] [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] { background: #111 !important; color: #fff !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+div[class*="st-key-card"] [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] * { color: #fff !important; }
 div[class*="st-key-card"] [data-testid="stElementContainer"]:has([data-testid="stButtonGroup"]) { display: flex; justify-content: flex-end; }
 
 [data-testid="stExpander"] details { background: #fff; border-radius: 24px; border: 1px solid rgba(0,0,0,.035);
@@ -118,7 +124,9 @@ h3, .card h3 { margin: 0; padding: 0; font-size: 17px; font-weight: 620; letter-
 .head h1 { font-size: 40px; line-height: 1.05; letter-spacing: -0.035em; font-weight: 620; margin: 0; padding: 0; color: #111; }
 .head .sub { color: #6f6f6f; font-size: 14.5px; margin-top: 10px; max-width: 760px; line-height: 1.5; }
 .head .stamp { font-size: 12px; color: #8a8a8a; text-align: right; line-height: 1.6; }
-.chart { display: block; }
+.chart, .svgimg { display: block; max-width: 100%; }
+.ic img, .round img { display: block; }
+.note img, .todo img { flex: 0 0 auto; margin-top: 2px; }
 .tick { font-size: 11px; fill: #9a9a9a; font-family: Inter, sans-serif; }
 .tick.strong { fill: #444; font-weight: 600; }
 .lbl { font-size: 12.5px; fill: #333; font-family: Inter, sans-serif; }
