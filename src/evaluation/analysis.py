@@ -20,12 +20,12 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.ticker import PercentFormatter, ScalarFormatter
 
-from src.baselines.personal_baseline import NOVELTY_COLS
 from src.evaluation.evaluate import evaluate_scores
 from src.evaluation.report import SCORES, insiders_caught, load_scored, train_threshold
+from src.models.feature_selection import load_selected_columns
 from src.models.isolation_forest_model import MODEL_COLS, fit_isolation_forest, score_isolation_forest
 from src.models.user_risk import add_user_risk
-from src.utils.config import ALERT_PERCENTILE, ROOT_DIR
+from src.utils.config import ALERT_PERCENTILE, MODELS_DIR, ROOT_DIR
 
 REPORTS_DIR = ROOT_DIR / "reports"
 
@@ -33,28 +33,24 @@ BUDGET_PERCENTILES = (95, 97, 98, 99, 99.5, 99.9)
 
 FEATURE_GROUPS = {
     "Logon": ["logon_count", "after_hours_logon_count", "first_logon_hour", "distinct_pcs"],
-    "USB / device": ["usb_connect_count", "after_hours_usb_count", "device_event_count", "first_usb_ever"],
+    "USB / device": ["usb_connect_count", "after_hours_usb_count", "device_event_count"],
     "File": ["file_event_count", "unique_filenames", "after_hours_file_count"],
     "Email": ["email_count", "total_attachments", "external_recipient_ratio"],
     "New features (Nov 2026)": [
-        "distinct_pcs", "first_logon_hour", "after_hours_usb_count",
-        "after_hours_file_count", "first_usb_ever",
+        "distinct_pcs", "first_logon_hour", "after_hours_usb_count", "after_hours_file_count",
     ],
 }
 
-COLORS = ["#257de0", "#f47230", "#00b894"]
-MARKERS = ["o", "s", "^"]
+COLORS = ["#257de0", "#f47230", "#00b894", "#f2a600"]
+MARKERS = ["o", "s", "^", "D"]
 TEXT = "#1f1f1f"
 TEXT_SECONDARY = "#6b6b6b"
 GRID = "#e7e7e7"
 
 
 def model_columns(features: list[str]) -> list[str]:
-    """Turn feature names into the columns the model uses (z-scores, or the flag itself)."""
-    columns = []
-    for feature in features:
-        columns.append(feature if feature in NOVELTY_COLS else f"{feature}_zscore")
-    return columns
+    """Turn feature names into the z-score columns the model uses."""
+    return [f"{feature}_zscore" for feature in features]
 
 
 def alert_budget(scored: pd.DataFrame, score_col: str, percentiles=BUDGET_PERCENTILES) -> pd.DataFrame:
@@ -78,13 +74,25 @@ def alert_budget(scored: pd.DataFrame, score_col: str, percentiles=BUDGET_PERCEN
     return pd.DataFrame(rows)
 
 
-def ablation(scored: pd.DataFrame, percentile: float = ALERT_PERCENTILE) -> pd.DataFrame:
-    """Refit the daily model without each feature group and compare with the full model."""
+def ablation(
+    scored: pd.DataFrame,
+    base_columns: list[str] | None = None,
+    percentile: float = ALERT_PERCENTILE,
+) -> pd.DataFrame:
+    """Refit the daily model without each feature group and compare with the base model.
+
+    This looks at the TEST period, so it is a diagnostic only. It explains
+    which groups matter; it is not used to choose the model (that is done on
+    the validation window in src/models/feature_selection.py).
+    """
+    base_columns = base_columns or MODEL_COLS
     train = scored[scored["split"] == "train"]
-    variants = {"All features": MODEL_COLS}
+    variants = {"Selected model": base_columns}
     for group, features in FEATURE_GROUPS.items():
         removed = set(model_columns(features))
-        variants[f"Without {group}"] = [c for c in MODEL_COLS if c not in removed]
+        remaining = [c for c in base_columns if c not in removed]
+        if 0 < len(remaining) < len(base_columns):
+            variants[f"Without {group}"] = remaining
 
     rows = []
     for name, columns in variants.items():
@@ -157,11 +165,11 @@ def plot_ablation(table: pd.DataFrame):
         bbox={"facecolor": "white", "edgecolor": "none", "pad": 1},
     )
 
-    full_model = table.loc[table["variant"] == "All features", "insiders_caught_daily"].iloc[0]
+    full_model = table.loc[table["variant"] == "Selected model", "insiders_caught_daily"].iloc[0]
     ax.axvline(full_model, color=TEXT_SECONDARY, linewidth=1, linestyle="--", zorder=0)
 
     ax.set_xlabel("Insiders caught by the daily score (train 99th-percentile threshold)", color=TEXT_SECONDARY)
-    ax.set_title("What happens when a feature group is removed", color=TEXT, loc="left")
+    ax.set_title("What happens when a feature group is removed (test period, diagnostic only)", color=TEXT, loc="left", fontsize=11)
     ax.set_xlim(0, table["insiders"].max() + 3)
     style_axes(ax)
     ax.grid(axis="y", visible=False)
@@ -188,13 +196,14 @@ def main() -> None:
     all_budgets.to_csv(REPORTS_DIR / "alert_budget.csv", index=False)
     plot_alert_budget(budgets).savefig(REPORTS_DIR / "alert_budget.png", dpi=150)
 
-    missing = [c for c in MODEL_COLS if c not in scored.columns]
+    base_columns = load_selected_columns(MODELS_DIR / "selected_features.json") or MODEL_COLS
+    missing = [c for c in base_columns if c not in scored.columns]
     if missing:
         print(f"Skipping ablation: re-run the pipeline first (missing {missing})")
         return
 
     print("Ablation (this refits the model several times, give it a minute):")
-    ablation_table = ablation(scored)
+    ablation_table = ablation(scored, base_columns)
     print(ablation_table.to_string(index=False))
     ablation_table.to_csv(REPORTS_DIR / "ablation.csv", index=False)
     plot_ablation(ablation_table).savefig(REPORTS_DIR / "ablation.png", dpi=150)

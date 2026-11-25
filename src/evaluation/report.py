@@ -19,7 +19,8 @@ from src.utils.config import ALERT_PERCENTILE, DATA_PROCESSED_DIR
 
 SCORES = {
     "Isolation Forest (daily)": "if_anomaly_score",
-    "7-day user risk": "user_risk_7d",
+    "Hybrid: IF + USB rule": "hybrid_score",
+    "7-day user risk (max)": "user_risk_7d",
     "Max |z| baseline": "stat_anomaly_score",
 }
 

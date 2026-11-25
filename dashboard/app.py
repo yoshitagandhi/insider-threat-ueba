@@ -658,7 +658,10 @@ if selected_user != "All users":
         evidence = user_data.nlargest(min(12, len(user_data)), "if_anomaly_score").copy()
         driver_info = evidence.apply(largest_driver, axis=1)
         evidence["Primary trigger"] = [f"{name} ({value:.1f}σ)" for name, value in driver_info]
-        evidence["Review state"] = evidence["if_anomaly_score"].ge(threshold).map({True: "Needs review", False: "Below threshold"})
+        needs_review = evidence["if_anomaly_score"].ge(threshold)
+        if "rule_alert" in evidence.columns:
+            needs_review = needs_review | evidence["rule_alert"].eq(1)
+        evidence["Review state"] = needs_review.map({True: "Needs review", False: "Below threshold"})
         evidence_columns = ["day", "Review state", "if_anomaly_score", "Primary trigger"]
         if "user_risk_7d" in evidence.columns:
             evidence_columns.append("user_risk_7d")

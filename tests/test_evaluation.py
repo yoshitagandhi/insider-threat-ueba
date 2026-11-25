@@ -86,7 +86,7 @@ def test_insiders_caught_counts_people_not_days():
     assert result.loc["all", "share_caught"] == 0.5
 
 
-def test_user_risk_is_a_backward_looking_average():
+def test_user_risk_is_a_backward_looking_max():
     scored = pd.DataFrame({
         "user": ["A"] * 4,
         "day": pd.date_range("2010-01-01", periods=4).date,
@@ -95,4 +95,4 @@ def test_user_risk_is_a_backward_looking_average():
 
     result = add_user_risk(scored, window=2)
 
-    assert result["user_risk_7d"].round(2).tolist() == [0.0, 0.0, 0.45, 0.6]
+    assert result["user_risk_7d"].round(2).tolist() == [0.0, 0.0, 0.9, 0.9]

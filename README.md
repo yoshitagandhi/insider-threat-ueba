@@ -22,18 +22,23 @@ lead, not evidence of intent and never an automated personnel decision.
   confusion matrix, and threshold-sensitivity analysis.
 - Measures detection per *insider* as well as per day: an analyst only needs
   one good alert to open a case.
-- Adds a 7-day user risk score (rolling average of each user's anomaly score)
-  so the analyst queue ranks people, not isolated days.
+- Chooses the model's inputs on a validation window cut from the training
+  period, so the test period is used exactly once.
+- Combines the model with one hand-written rule (first-ever USB use after
+  hours), the way real security teams mix rules and machine learning.
+- Adds a 7-day user risk score (each user's highest daily score in the last
+  week) so the analyst queue ranks people, not isolated days.
 - Includes an alert-budget analysis (insiders caught vs alerts per day) and a
   feature-group ablation study, both with charts in `reports/`.
 
 ## Headline result
 
-> These are the **v2** results (26 Nov 2026). v3 adds three r4.2-1 features
-> (after-hours USB, after-hours file activity, first-ever USB use) and the 7-day
-> user risk score. Re-run `python -m src.pipeline`,
-> `python -m src.evaluation.report` and `python -m src.evaluation.analysis`
-> to produce the v3 numbers.
+> These are the **v2** results (26 Nov 2026), the best *measured* version so
+> far. v3 was an experiment that made things worse; see
+> [What v3 taught us](#what-v3-taught-us). The current code (v4) fixes it with
+> validation-based feature selection and a hybrid rule. Re-run
+> `python -m src.pipeline`, `python -m src.evaluation.report` and
+> `python -m src.evaluation.analysis` to produce the v4 numbers.
 
 Isolation Forest is fitted on the days before **29 Oct 2010** and evaluated
 on the later, unseen days (122,217 user-days, 415 of them malicious). The
@@ -77,8 +82,8 @@ This changes the reading of the results. r4.2-2 looked like the weakest
 scenario per day (6.7% recall) only because those insiders are active for
 many days; 14 of the 16 still received at least one alert. The real gap is
 **r4.2-1**: short bursts of after-hours logins and first-time USB use just
-before the insider leaves. The v3 features target exactly this. r4.2-3 has
-only 5 insiders, too few to draw conclusions from.
+before the insider leaves. r4.2-3 has only 5 insiders, too few to draw
+conclusions from.
 
 These numbers are an improvement over the previous version (precision 0.018,
 recall 0.062, F1 0.028, PR-AUC 0.014), even though that version was scored on
@@ -88,6 +93,50 @@ is an early-stage, analyst-assistive detector, not a production-ready one.
 `n_estimators=200` and `contamination="auto"` are reasonable defaults and have
 not been tuned.
 
+## What v3 taught us
+
+v3 added three features aimed at r4.2-1 (after-hours USB, after-hours file
+activity, and a 0/1 "first-ever USB use" flag fed straight into Isolation
+Forest), plus a 7-day *average* risk score.
+
+| Insiders caught (test) | v2 | v3 |
+|---|---|---|
+| r4.2-1 (the target) | 2/13 | **5/13** |
+| r4.2-2 | 14/16 | **4/16** |
+| r4.2-3 | 2/5 | 3/5 |
+| **All** | **18/34** | **12/34** |
+| Precision (daily) | 0.028 | 0.015 |
+
+- The features worked on their target: r4.2-1 more than doubled.
+- But the alert budget is fixed (top 1% of days). The new inputs, especially
+  the 0/1 flag, made ordinary users' first-USB and after-hours days look
+  extreme. Those days took alert slots that used to go to r4.2-2 insiders.
+  Isolation Forest also picks features at random, so every weak extra input
+  dilutes the strong ones.
+- A test-period ablation confirmed it: removing feature groups *helped*.
+  The original 9 features alone caught 18/34 with precision 0.026; without the
+  logon group, PR-AUC rose to 0.022.
+- The 7-day average risk caught only 3/34: averaging smoothed away the
+  single-day spikes that actually catch insiders.
+
+The tempting fix, picking the best ablation row, would mean choosing the model
+by looking at the test set. v4 does it properly instead:
+
+1. **Validation-based feature selection** (`src/models/feature_selection.py`).
+   The training period is split again by date (first 75% fit, last 25%
+   validation). Five candidate feature sets (v1, v2, v3, v3 without logon,
+   v3 without email) are compared on validation, ranked by insiders caught,
+   with PR-AUC as the tie-break. The winner is refitted on the full training
+   period and tested once. The choice is saved in
+   `models/selected_features.json`.
+2. **Hybrid rule** (`src/models/rules.py`). The first-ever-USB flag no longer
+   goes into the model. Instead, a rule fires on a user's first-ever USB day
+   if they were also active after hours, and `hybrid_score` puts those days
+   above every model-only day. The rule fires rarely, so it targets r4.2-1
+   without taking alert slots away from r4.2-2.
+3. **7-day risk uses the maximum, not the average**, so a strong spike keeps a
+   user near the top of the queue for a week.
+
 ## Architecture
 
 ```text
@@ -96,14 +145,17 @@ CERT event CSVs
   → 14-day historical personal baseline
   → z-score deviation features (cold-start days left unscored)
   → time-based split: fit on earlier dates, score later dates
+  → feature-set selection on a validation window inside the training period
   → Isolation Forest anomaly score + top_reasons explanation
-  → 7-day user risk score (rolling average per user)
+  → hybrid score: model + first-ever-USB-after-hours rule
+  → 7-day user risk score (rolling max per user)
   → CERT answer-file labels for offline evaluation
   → Streamlit analyst dashboard
 ```
 
-`is_malicious` is strictly evaluation-only. Both Isolation Forest and the
-experimental autoencoder train without ground-truth label filtering.
+`is_malicious` is never used to fit a model. It is used for test-period
+evaluation and, inside the training period only, to compare candidate feature
+sets on the validation window.
 
 ## Reproducibility note
 
@@ -159,8 +211,10 @@ baseline, broken down by CERT scenario.
   six thresholds, shown as alerts per day so a security team can pick a
   threshold from its review capacity.
 - `ablation.csv` / `ablation.png`: the model refitted without each feature
-  group (logon, USB/device, file, email, and the newest features), showing
-  which groups really help. It refits the model six times, so allow a minute.
+  group (logon, USB/device, file, email, and the newest features), compared
+  with the selected model. It uses the test period, so it explains results but
+  is never used to choose the model. It refits the model several times, so
+  allow a minute.
 
 The pipeline reads multi-gigabyte event data and is I/O and hardware dependent;
 allow time accordingly. It writes `data/processed/scored_daily.parquet` and an
@@ -198,6 +252,8 @@ src/
   evaluation/report.py         # test-period evaluation report
   evaluation/analysis.py       # alert-budget and ablation charts
   models/user_risk.py          # 7-day user risk score
+  models/feature_selection.py  # validation-based choice of model inputs
+  models/rules.py              # first-ever-USB-after-hours rule + hybrid score
 reports/                       # charts and tables written by analysis.py
 dashboard/app.py               # cached Streamlit risk triage view
 notebooks/01_eda.ipynb         # EDA and corrected benchmark workflow
@@ -215,7 +271,8 @@ The test suite covers feature correctness (including exclusion of logoff
 events and the distinct-PC count), leakage/cold-start behavior, zero-variance
 deviations, the standard-deviation floor, `top_reasons` wording, the time-based
 split, train-only thresholds, after-hours USB/file counts, the first-ever USB
-flag, the backward-looking user risk, feature-group coverage, fixed anchor
+flag, the hybrid rule, feature-selection ranking and fallback, the
+backward-looking user risk, feature-group coverage, fixed anchor
 baselines, and
 evaluation/error-categorization smoke cases. GitHub Actions runs
 the suite on Python 3.10, 3.11, and 3.12 for pushes and pull requests.
@@ -243,14 +300,15 @@ the suite on Python 3.10, 3.11, and 3.12 for pushes and pull requests.
 - Three features target CERT scenario r4.2-1: `after_hours_usb_count` (USB
   connections before 06:00 or after 20:00), `after_hours_file_count`, and
   `first_usb_ever`. The last is a 0/1 flag for the first day a user ever
-  connects a USB drive, built from a cumulative sum of earlier days only. A
-  z-score cannot express "never done before" well (the baseline is flat), so
-  the flag goes into the model directly instead of as a z-score.
-- `user_risk_7d` is the mean daily anomaly score over the user's last 7 scored
-  days, including today and nothing later. It rewards persistence (helpful for
-  low-and-slow r4.2-2) but smooths out single-day spikes (less helpful for
-  short r4.2-1 bursts). That is why the report shows both scores side by side
-  rather than replacing one with the other.
+  connects a USB drive, built from a cumulative sum of earlier days only. In v3
+  it went into the model directly and crowded out other alerts; in v4 it is
+  only used by the hybrid rule.
+- `user_risk_7d` is the highest daily anomaly score over the user's last 7
+  scored days, including today and nothing later. v3 used the average, which
+  smoothed away the spikes that catch insiders.
+- The feature-group ablation in `reports/` is computed on the test period, so
+  it is a diagnostic that explains results. It is never used to pick the
+  model; that happens on the validation window.
 - Isolation Forest is fitted on the first 60% of dates and evaluated on the last
   40%. The alert threshold is the 99th percentile of *training* scores. The
   training period still contains some malicious days; that is acceptable for an
@@ -262,13 +320,10 @@ the suite on Python 3.10, 3.11, and 3.12 for pushes and pull requests.
 - Try a rolling (walk-forward) split, refitting every month, instead of one
   fixed cut-off date.
 - Run a hyperparameter search over Isolation Forest's `n_estimators` and
-  `contamination`, which are currently reasonable defaults rather than tuned
-  values.
-- If r4.2-1 is still weak after v3, add HTTP features for a short list of
+  `max_samples` on the same validation window used for feature selection.
+- If r4.2-1 is still weak in v4, add HTTP features for a short list of
   domains (for example file-sharing and job sites). r4.2-1 insiders upload data
   to a leak site, which only `http.csv` can see.
-- Combine the daily and 7-day scores (for example, alert if either one crosses
-  its threshold) and compare insiders caught at the same alert budget.
 
 ## Interview talking points
 
@@ -281,6 +336,12 @@ The most useful analytical lesson is about choosing the right metric. Per day,
 r4.2-2 looked like the hardest scenario (6.7% recall). Per insider, 14 of 16
 were caught, and the real weakness turned out to be r4.2-1. Measuring the way
 an analyst actually works changed which problem was worth solving next.
+
+The third lesson is about honest model selection. The v3 features improved
+their target scenario but hurt overall, and the best-looking fix came from the
+test set. Moving that choice to a validation window inside the training
+period, and turning the flag into a rule, keeps the final test result
+trustworthy.
 
 A second talking point is evaluation honesty: moving from scoring the training
 period to a forward-looking time split, and fixing two silent z-score bugs

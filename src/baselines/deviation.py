@@ -47,9 +47,12 @@ def top_reasons(row: pd.Series, n: int = 3) -> str:
     Novelty flags, when present and switched on, are always listed first.
     """
     parts = []
-    for col, label in NOVELTY_LABELS.items():
-        if row.get(col, 0) == 1:
-            parts.append(label)
+    if row.get("rule_alert", 0) == 1:
+        parts.append("Rule: first-ever USB use after hours")
+    else:
+        for col, label in NOVELTY_LABELS.items():
+            if row.get(col, 0) == 1:
+                parts.append(label)
 
     zscores = {}
     for col in FEATURE_COLS:

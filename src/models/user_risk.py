@@ -8,16 +8,18 @@ def add_user_risk(
     score_col: str = "if_anomaly_score",
     window: int = USER_RISK_WINDOW,
 ) -> pd.DataFrame:
-    """Add user_risk_7d: the average anomaly score of the user's last 7 scored days.
+    """Add user_risk_7d: the user's highest anomaly score over their last 7 scored days.
 
-    A single odd day is often noise, but a user who stays a little unusual for a
-    whole week is worth a look. This is exactly the "low-and-slow" pattern of
-    CERT scenario r4.2-2. The window only covers today and earlier days, so it
-    never uses future behaviour.
+    An earlier version used the 7-day average, but averaging smoothed away
+    the single-day spikes that actually catch insiders (3 of 34 caught versus
+    12 for the daily score). The maximum keeps a strong spike visible for a
+    week, so a user stays near the top of the analyst queue until reviewed.
+    The window only covers today and earlier days, so it never uses future
+    behaviour.
     """
     scored = scored.sort_values(["user", "day"]).copy()
     scored["user_risk_7d"] = scored.groupby("user")[score_col].transform(
-        lambda scores: scores.rolling(window, min_periods=1).mean()
+        lambda scores: scores.rolling(window, min_periods=1).max()
     )
     return scored
 

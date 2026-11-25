@@ -4,11 +4,11 @@ import joblib
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 
-from src.baselines.personal_baseline import FEATURE_COLS, NOVELTY_COLS
+from src.baselines.personal_baseline import FEATURE_COLS
 from src.utils.config import RANDOM_SEED, TRAIN_FRACTION
 
 ZSCORE_COLS = [f"{c}_zscore" for c in FEATURE_COLS]
-MODEL_COLS = ZSCORE_COLS + NOVELTY_COLS
+MODEL_COLS = ZSCORE_COLS
 
 
 def split_by_date(daily: pd.DataFrame, train_fraction: float = TRAIN_FRACTION):
